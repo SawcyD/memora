@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+/*
+ * Fluent design tokens, named after the Windows 11 design system so component
+ * code reads the way the Microsoft docs do. Colors are the WinUI light/dark
+ * theme resources; do not introduce ad-hoc hex values in components.
+ */
+
+@theme {
+  --font-sans: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+
+  /* Windows 11 corner radii — small. Nothing in the app exceeds --radius-lg. */
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 7px;
+}
+
+:root {
+  color-scheme: light;
+
+  /* Overwritten at runtime from the Windows system accent color. */
+  --accent: #0078d4;
+  --accent-light1: #0086f0;
+  --accent-light2: #4cc2ff;
+  --accent-dark1: #005a9e;
+
+  /* Layer + fill fidelity per WinUI's light theme. */
+  --layer-fill: rgb(255 255 255 / 0.5);
+  --card-fill: rgb(255 255 255 / 0.7);
+  --card-fill-secondary: rgb(246 246 246 / 0.5);
+  --smoke-fill: rgb(0 0 0 / 0.3);
+  --acrylic-fill: rgb(252 252 252 / 0.85);
+
+  --control-fill: rgb(255 255 255 / 0.7);
+  --control-fill-secondary: rgb(249 249 249 / 0.5);
+  --control-fill-tertiary: rgb(249 249 249 / 0.3);
+  --subtle-hover: rgb(0 0 0 / 0.037);
+  --subtle-pressed: rgb(0 0 0 / 0.024);
+
+  --text-primary: #1a1a1a;
+  --text-secondary: rgb(0 0 0 / 0.61);
+  --text-tertiary: rgb(0 0 0 / 0.45);
+  --text-disabled: rgb(0 0 0 / 0.36);
+  --text-on-accent: #ffffff;
+
+  --stroke-surface: rgb(117 117 117 / 0.4);
+  --stroke-divider: rgb(0 0 0 / 0.0803);
+  --stroke-control: rgb(0 0 0 / 0.0578);
+  --stroke-control-strong: rgb(0 0 0 / 0.45);
+  --stroke-focus: #1a1a1a;
+
+  --shadow-flyout: 0 8px 16px rgb(0 0 0 / 0.14);
+  --shadow-dialog: 0 32px 64px rgb(0 0 0 / 0.19);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --layer-fill: rgb(58 58 58 / 0.3);
+  --card-fill: rgb(255 255 255 / 0.05);
+  --card-fill-secondary: rgb(255 255 255 / 0.03);
+  --smoke-fill: rgb(0 0 0 / 0.3);
+  --acrylic-fill: rgb(44 44 44 / 0.85);
+
+  --control-fill: rgb(255 255 255 / 0.06);
+  --control-fill-secondary: rgb(255 255 255 / 0.08);
+  --control-fill-tertiary: rgb(255 255 255 / 0.03);
+  --subtle-hover: rgb(255 255 255 / 0.06);
+  --subtle-pressed: rgb(255 255 255 / 0.04);
+
+  --text-primary: #ffffff;
+  --text-secondary: rgb(255 255 255 / 0.79);
+  --text-tertiary: rgb(255 255 255 / 0.55);
+  --text-disabled: rgb(255 255 255 / 0.36);
+  --text-on-accent: #000000;
+
+  --stroke-surface: rgb(117 117 117 / 0.4);
+  --stroke-divider: rgb(255 255 255 / 0.083);
+  --stroke-control: rgb(255 255 255 / 0.07);
+  --stroke-control-strong: rgb(255 255 255 / 0.54);
+  --stroke-focus: #ffffff;
+
+  --shadow-flyout: 0 8px 16px rgb(0 0 0 / 0.26);
+  --shadow-dialog: 0 32px 64px rgb(0 0 0 / 0.37);
+}
+
+/* On dark themes Windows uses the lighter accent variants for legibility. */
+:root[data-theme="dark"] {
+  --accent-usable: var(--accent-light2);
+}
+:root {
+  --accent-usable: var(--accent);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  /* Transparent so the Mica backdrop set by the Rust side shows through. */
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  /* Windows renders UI text with grayscale AA; matching it avoids the fringing
+     that gives web-in-a-window apps away. */
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+/* Windows-style focus rectangle: dark inner, light outer, always visible on
+   keyboard focus and never suppressed. */
+:focus-visible {
+  outline: 2px solid var(--stroke-focus);
+  outline-offset: 1px;
+  border-radius: var(--radius-md);
+}
+
+::selection {
+  background: var(--accent-usable);
+  color: var(--text-on-accent);
+}
+
+/* Fluent scrollbars: thin, no arrows, low contrast until hovered. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--stroke-control-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* High contrast: hand everything back to the system palette. */
+@media (forced-colors: active) {
+  :root {
+    --accent-usable: Highlight;
+    --text-primary: CanvasText;
+    --stroke-divider: CanvasText;
+  }
+}
+
+/* Numeric readouts must not jitter as digits change. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}

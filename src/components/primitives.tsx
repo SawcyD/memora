@@ -77,6 +77,79 @@ export function ToggleSwitch({
   );
 }
 
+/** WinUI ComboBox. A native select restyled to Windows metrics. */
+export function ComboBox<T extends string | number>({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+  label: string;
+}) {
+  return (
+    <select
+      aria-label={label}
+      value={String(value)}
+      onChange={(e) => {
+        const picked = options.find((o) => String(o.value) === e.target.value);
+        if (picked) onChange(picked.value);
+      }}
+      className={[
+        "h-8 min-w-[150px] shrink-0 rounded-[var(--radius-md)] border px-2 text-[13px]",
+        "border-[var(--stroke-control)] bg-[var(--control-fill)] text-[var(--text-primary)]",
+      ].join(" ")}
+    >
+      {options.map((o) => (
+        <option key={String(o.value)} value={String(o.value)}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** WinUI NumberBox, constrained to a range. */
+export function NumberBox({
+  value,
+  min,
+  max,
+  onChange,
+  label,
+  suffix,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+  label: string;
+  suffix?: string;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1.5">
+      <input
+        type="number"
+        aria-label={label}
+        value={value}
+        min={min}
+        max={max}
+        onChange={(e) => {
+          const n = Number(e.target.value);
+          // Out-of-range input is clamped, not silently rejected.
+          if (Number.isFinite(n)) onChange(Math.min(max, Math.max(min, Math.round(n))));
+        }}
+        className={[
+          "tabular h-8 w-[72px] rounded-[var(--radius-md)] border px-2 text-right text-[13px]",
+          "border-[var(--stroke-control)] bg-[var(--control-fill)] text-[var(--text-primary)]",
+        ].join(" ")}
+      />
+      {suffix && <span className="text-[12px] text-[var(--text-secondary)]">{suffix}</span>}
+    </div>
+  );
+}
+
 /**
  * A row in a Windows settings list: icon-free, one line of title, one of
  * description, and a control on the trailing edge.

@@ -6,9 +6,11 @@ import { CleanerPage } from "@/pages/Cleaner";
 import { HomePage } from "@/pages/Home";
 import { PlaceholderPage } from "@/pages/Placeholder";
 import { ProcessesPage } from "@/pages/Processes";
+import { SettingsPage } from "@/pages/Settings";
 import type { PageId } from "@/system/types";
 import { useClean } from "@/system/useClean";
 import { useMemory } from "@/system/useMemory";
+import { useSettings } from "@/system/useSettings";
 import { useSystemTheme } from "@/system/useTheme";
 
 /** Width below which the navigation pane auto-collapses to an icon rail. */
@@ -18,7 +20,6 @@ const SUMMARIES: Partial<Record<PageId, string>> = {
   memory: "The detailed memory breakdown and multi-range graph are not built yet.",
   automation: "Profiles and automatic cleaning rules are not built yet.",
   history: "Optimization history is not recorded yet.",
-  settings: "Settings, including tray behavior, are not built yet.",
   about: "Memora 0.1.0",
 };
 
@@ -27,6 +28,7 @@ export default function App() {
   const memory = useMemory();
   // Lives at the app level so a run keeps going while the user browses pages.
   const clean = useClean();
+  const settings = useSettings();
 
   const [page, setPage] = useState<PageId>("home");
   const [userCollapsed, setUserCollapsed] = useState(false);
@@ -40,15 +42,21 @@ export default function App() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // Double-clicking the tray icon opens Memora straight to a given page.
+  // Tray click actions: navigate, or start an optimization from the tray.
   useEffect(() => {
-    const unlisten = listen<PageId>("tray://navigate", (e) => setPage(e.payload)).catch(
-      () => () => {},
-    );
+    const subs = [
+      listen<PageId>("tray://navigate", (e) => setPage(e.payload)),
+      listen("tray://optimize", () => {
+        // Show what is happening rather than running invisibly.
+        setPage("cleaner");
+        clean.start(["trimWorkingSets"], excluded);
+      }),
+    ].map((p) => p.catch(() => () => {}));
+
     return () => {
-      unlisten.then((f) => f());
+      subs.forEach((p) => p.then((f) => f()));
     };
-  }, []);
+  }, [clean, excluded]);
 
   // A narrow window forces the rail; above the breakpoint the user's choice wins.
   const collapsed = compact || userCollapsed;
@@ -91,6 +99,8 @@ export default function App() {
                 setExcluded((s) => (s.includes(pid) ? s.filter((p) => p !== pid) : [...s, pid]))
               }
             />
+          ) : page === "settings" ? (
+            <SettingsPage state={settings} />
           ) : (
             <PlaceholderPage title={title} summary={SUMMARIES[page] ?? ""} />
           )}

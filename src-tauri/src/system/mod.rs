@@ -5,3 +5,4 @@ pub mod accent;
 pub mod clean;
 pub mod memory;
 pub mod process;
+pub mod settings;

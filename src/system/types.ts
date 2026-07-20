@@ -71,6 +71,25 @@ export interface CleanReport {
   unavailable: string[];
 }
 
+/** Mirrors `ClickAction` in src-tauri/src/system/settings.rs. */
+export type ClickAction = "none" | "openMemora" | "openMemoryPage" | "optimize";
+
+/** Mirrors `Settings` in src-tauri/src/system/settings.rs. */
+export interface Settings {
+  showTrayPercentage: boolean;
+  trayIntervalSecs: number;
+  warningThreshold: number;
+  highThreshold: number;
+  criticalThreshold: number;
+  singleClick: ClickAction;
+  doubleClick: ClickAction;
+  middleClick: ClickAction;
+  minimizeToTray: boolean;
+  closeToTray: boolean;
+  startWithWindows: boolean;
+  showOptimizationNotifications: boolean;
+}
+
 export type PageId =
   | "home"
   | "memory"

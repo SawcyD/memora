@@ -12,28 +12,8 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::system::accent::{self, Rgb};
 use crate::system::memory::MemorySnapshot;
+use crate::system::settings::{ClickAction, Settings};
 use icon::UsageState;
-
-/// Tray behavior. These are the spec's defaults; the Settings page is not built
-/// yet, so nothing mutates them at runtime.
-#[derive(Debug, Clone, Copy)]
-pub struct TraySettings {
-    pub show_digits: bool,
-    pub warning_threshold: u8,
-    pub high_threshold: u8,
-    pub critical_threshold: u8,
-}
-
-impl Default for TraySettings {
-    fn default() -> Self {
-        Self {
-            show_digits: true,
-            warning_threshold: 70,
-            high_threshold: 85,
-            critical_threshold: 95,
-        }
-    }
-}
 
 /// Rendering a 32x32 icon costs a supersampled pass per pixel, so each distinct
 /// (percent, state) pair is rasterized once and reused. Bounded at 101 x 4.
@@ -44,7 +24,9 @@ struct IconCache {
 
 impl IconCache {
     fn get(&mut self, pct: u8, state: UsageState, accent: Rgb, digits: bool) -> Vec<u8> {
-        let key = (pct, state as u8);
+        // `digits` is part of the key: toggling the setting must not serve a
+        // stale icon rendered under the previous choice.
+        let key = (pct, (state as u8) << 1 | u8::from(digits));
         self.entries
             .entry(key)
             .or_insert_with(|| icon::render(pct, state, accent, digits))
@@ -57,7 +39,9 @@ pub struct TrayState<R: Runtime> {
     /// Last percent pushed to the shell. Updates are skipped when the rounded
     /// value has not moved, which is what keeps Explorer from flickering.
     last_percent: Mutex<Option<u8>>,
-    settings: Mutex<TraySettings>,
+    /// When the icon was last pushed, so the configured interval is honoured
+    /// even though the sampler ticks every second for the graph.
+    last_update: Mutex<Option<std::time::Instant>>,
     accent: Rgb,
     /// Held because `TrayIcon` exposes no menu getter; refreshing the
     /// informational rows requires the original handles.
@@ -112,23 +96,42 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     }
 }
 
+/// Performs a configured click action. Each is emitted rather than executed
+/// directly where the UI owns the behaviour.
+fn run_action<R: Runtime>(app: &AppHandle<R>, action: ClickAction) {
+    match action {
+        ClickAction::None => {}
+        ClickAction::OpenMemora => show_window(app),
+        ClickAction::OpenMemoryPage => {
+            show_window(app);
+            let _ = app.emit_to("main", "tray://navigate", "memory");
+        }
+        ClickAction::Optimize => {
+            let _ = app.emit_to("main", "tray://optimize", ());
+        }
+    }
+}
+
 fn on_tray_event<R: Runtime>(tray: &TrayIcon<R>, event: TrayIconEvent) {
     let app = tray.app_handle();
+    // Right click is handled by the shell's own menu, so it never appears here.
+    let settings = app.state::<crate::system::settings::Store>().get();
+
     match event {
-        // Left click opens the window; double click additionally routes to the
-        // Memory page. Right click is handled by the shell's menu.
         TrayIconEvent::Click {
             button: MouseButton::Left,
             button_state: MouseButtonState::Up,
             ..
-        } => show_window(app),
+        } => run_action(app, settings.single_click),
         TrayIconEvent::DoubleClick {
             button: MouseButton::Left,
             ..
-        } => {
-            show_window(app);
-            let _ = app.emit_to("main", "tray://navigate", "memory");
-        }
+        } => run_action(app, settings.double_click),
+        TrayIconEvent::Click {
+            button: MouseButton::Middle,
+            button_state: MouseButtonState::Up,
+            ..
+        } => run_action(app, settings.middle_click),
         _ => {}
     }
 }
@@ -140,7 +143,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<TrayIcon<R>> {
     app.manage(TrayState {
         cache: Mutex::new(IconCache::default()),
         last_percent: Mutex::new(None),
-        settings: Mutex::new(TraySettings::default()),
+        last_update: Mutex::new(None),
         accent: accent::accent().tray_rgb(),
         usage_item,
         available_item,
@@ -160,11 +163,24 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<TrayIcon<R>> {
 ///
 /// Skips all shell calls when the rounded percentage has not changed, so a
 /// steady system produces no tray traffic at all.
-pub fn update<R: Runtime>(app: &AppHandle<R>, snap: &MemorySnapshot) {
+pub fn update<R: Runtime>(app: &AppHandle<R>, snap: &MemorySnapshot, settings: &Settings) {
     let Some(tray) = app.tray_by_id("memora") else {
         return;
     };
     let state = app.state::<TrayState<R>>();
+
+    // The sampler ticks every second for the graph; the tray only refreshes on
+    // the user's chosen interval.
+    {
+        let mut last_update = state.last_update.lock().unwrap();
+        let due = last_update.is_none_or(|t| {
+            t.elapsed() >= std::time::Duration::from_secs(settings.tray_interval_secs)
+        });
+        if !due {
+            return;
+        }
+        *last_update = Some(std::time::Instant::now());
+    }
 
     let pct = snap.percent_in_use.round().clamp(0.0, 100.0) as u8;
     {
@@ -175,7 +191,6 @@ pub fn update<R: Runtime>(app: &AppHandle<R>, snap: &MemorySnapshot) {
         *last = Some(pct);
     }
 
-    let settings = *state.settings.lock().unwrap();
     let usage = UsageState::from_percent(
         pct,
         settings.warning_threshold,
@@ -187,7 +202,7 @@ pub fn update<R: Runtime>(app: &AppHandle<R>, snap: &MemorySnapshot) {
         .cache
         .lock()
         .unwrap()
-        .get(pct, usage, state.accent, settings.show_digits);
+        .get(pct, usage, state.accent, settings.show_tray_percentage);
     let _ = tray.set_icon(Some(Image::new_owned(rgba, icon::SIZE, icon::SIZE)));
 
     let gb = |b: u64| b as f64 / 1024f64.powi(3);

@@ -14,8 +14,14 @@ use crate::system::accent::Rgb;
 pub const SIZE: u32 = 32;
 
 const CENTER: f32 = SIZE as f32 / 2.0;
-const RING_OUTER: f32 = 15.0;
-const RING_WIDTH: f32 = 3.6;
+const RING_OUTER: f32 = 15.5;
+/// Kept thin so the interior is large enough for legible digits. The ring is
+/// still the primary indicator; it just does not need to be fat to read.
+const RING_WIDTH: f32 = 2.6;
+/// Digits are drawn at 3x the 3x5 base, giving 9x15 glyphs. Two of them plus a
+/// gap span 20px inside a 25px interior — as large as the ring allows, which is
+/// what keeps the number readable once Windows scales the icon down to 16px.
+const DIGIT_SCALE: i32 = 3;
 /// 3x3 samples per pixel. Enough to hide stairstepping on the arc at 32px.
 const SUPERSAMPLE: u32 = 3;
 
@@ -140,17 +146,17 @@ fn ring_coverage(x: u32, y: u32, sweep: f32) -> f32 {
     hits as f32 / (n * n) as f32
 }
 
-/// Draws a bitmap glyph at 2x scale with its top-left at (`ox`, `oy`).
+/// Draws a bitmap glyph at `DIGIT_SCALE` with its top-left at (`ox`, `oy`).
 fn draw_glyph(c: &mut Canvas, glyph: &[u8; 5], ox: i32, oy: i32, color: Rgb) {
     for (row, bits) in glyph.iter().enumerate() {
         for col in 0..3 {
             if bits & (0b100 >> col) == 0 {
                 continue;
             }
-            for dy in 0..2 {
-                for dx in 0..2 {
-                    let x = ox + col as i32 * 2 + dx;
-                    let y = oy + row as i32 * 2 + dy;
+            for dy in 0..DIGIT_SCALE {
+                for dx in 0..DIGIT_SCALE {
+                    let x = ox + col as i32 * DIGIT_SCALE + dx;
+                    let y = oy + row as i32 * DIGIT_SCALE + dy;
                     if x >= 0 && y >= 0 {
                         c.blend(x as u32, y as u32, color, 1.0);
                     }
@@ -192,19 +198,24 @@ pub fn render(percent: u8, state: UsageState, accent: Rgb, show_digits: bool) ->
     // "99+" would need a narrower font and "9+" reads as nine percent, so the
     // spec's other option applies: a completely filled icon, no digits.
     if show_digits && percent < 100 {
-        let glyphs: [&[u8; 5]; 2] = if percent >= 10 {
-            [&DIGITS[(percent / 10) as usize], &DIGITS[(percent % 10) as usize]]
-        } else {
-            // Single digit: centered, no leading zero.
-            let ox = CENTER as i32 - 3;
-            draw_glyph(&mut c, &DIGITS[percent as usize], ox, CENTER as i32 - 5, color);
-            return c.px;
-        };
+        let glyph_w = 3 * DIGIT_SCALE;
+        let top = CENTER as i32 - (5 * DIGIT_SCALE) / 2;
 
-        // Two 6px glyphs with a 1px gap = 13px, centered.
-        let ox = CENTER as i32 - 6;
-        draw_glyph(&mut c, glyphs[0], ox, CENTER as i32 - 5, color);
-        draw_glyph(&mut c, glyphs[1], ox + 7, CENTER as i32 - 5, color);
+        if percent >= 10 {
+            // Two glyphs plus a 1px gap, centred as a unit.
+            let ox = CENTER as i32 - (glyph_w * 2 + 1) / 2;
+            draw_glyph(&mut c, &DIGITS[(percent / 10) as usize], ox, top, color);
+            draw_glyph(
+                &mut c,
+                &DIGITS[(percent % 10) as usize],
+                ox + glyph_w + 1,
+                top,
+                color,
+            );
+        } else {
+            // Single digit: centred, no leading zero.
+            draw_glyph(&mut c, &DIGITS[percent as usize], CENTER as i32 - glyph_w / 2, top, color);
+        }
     }
 
     c.px

@@ -49,6 +49,34 @@ fn is_elevated() -> bool {
     system::clean::is_elevated()
 }
 
+#[tauri::command]
+fn get_settings(store: tauri::State<'_, system::settings::Store>) -> system::settings::Settings {
+    store.get()
+}
+
+/// Saves settings and applies the ones with effects outside Memora.
+#[tauri::command]
+fn update_settings(
+    store: tauri::State<'_, system::settings::Store>,
+    settings: system::settings::Settings,
+) -> Result<system::settings::Settings, String> {
+    let previous = store.get();
+    let saved = store.set(settings)?;
+
+    // Only touch the registry when the toggle actually changed, so opening
+    // Settings does not rewrite the user's startup entry.
+    if saved.start_with_windows != previous.start_with_windows {
+        if let Err(e) = system::settings::set_start_with_windows(saved.start_with_windows) {
+            // Roll the stored value back so the UI does not claim a state that
+            // Windows did not accept.
+            let _ = store.set(previous);
+            return Err(e);
+        }
+    }
+
+    Ok(saved)
+}
+
 /// Shared cancellation flag for the in-flight optimization, if any.
 #[derive(Default)]
 struct CleanTask(Mutex<Option<system::clean::Cancel>>);
@@ -122,8 +150,11 @@ fn spawn_sampler(app: tauri::AppHandle) {
     std::thread::spawn(move || loop {
         if let Ok(snap) = system::memory::snapshot() {
             let _ = app.emit("memory://sample", snap);
-            tray::update(&app, &snap);
+            let settings = app.state::<system::settings::Store>().get();
+            tray::update(&app, &snap, &settings);
         }
+        // Fixed 1 Hz: the graph needs a steady series regardless of how often
+        // the tray chooses to redraw.
         std::thread::sleep(Duration::from_secs(1));
     });
 }
@@ -142,11 +173,21 @@ pub fn run() {
             trim_process,
             end_process,
             is_elevated,
+            get_settings,
+            update_settings,
             start_optimization,
             cancel_optimization
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
+
+            // Settings must exist before the tray, which reads click actions
+            // from them on every event.
+            let config_dir = app
+                .path()
+                .app_config_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            app.manage(system::settings::Store::load(config_dir.join("settings.json")));
 
             // Mica is the main-surface backdrop per the design rules. It needs
             // Windows 11 build 22000+; older builds fall back to a solid theme
@@ -167,16 +208,38 @@ pub fn run() {
 
             tray::init(app.handle())?;
 
-            // Close-to-tray: the meter is the reason Memora keeps running with
-            // no window, so closing hides instead of exiting. Exit is available
-            // from the tray menu.
+            // The window-state plugin restores whatever state Memora exited in,
+            // including minimized. Combined with the tray that leaves the app
+            // apparently missing on launch, so a minimized restore is undone.
+            if window.is_minimized().unwrap_or(false) {
+                let _ = window.unminimize();
+            }
+
             let handle = app.handle().clone();
             window.on_window_event(move |event| {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
+                let settings = handle.state::<system::settings::Store>().get();
+                let hide = || {
                     if let Some(w) = handle.get_webview_window("main") {
                         let _ = w.hide();
                     }
+                };
+
+                match event {
+                    // Close-to-tray: the meter is the reason Memora keeps
+                    // running without a window. Exit lives in the tray menu.
+                    WindowEvent::CloseRequested { api, .. } if settings.close_to_tray => {
+                        api.prevent_close();
+                        hide();
+                    }
+                    // Minimize-to-tray removes Memora from the taskbar too.
+                    WindowEvent::Resized(_) if settings.minimize_to_tray => {
+                        if let Some(w) = handle.get_webview_window("main") {
+                            if w.is_minimized().unwrap_or(false) {
+                                hide();
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             });
 

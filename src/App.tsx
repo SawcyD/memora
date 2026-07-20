@@ -3,6 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import { NavigationView, FOOTER_ITEMS, NAV_ITEMS } from "@/components/NavigationView";
 import { TitleBar } from "@/components/TitleBar";
 import { CleanerPage } from "@/pages/Cleaner";
+import { AboutPage } from "@/pages/About";
+import { HistoryPage } from "@/pages/History";
 import { HomePage } from "@/pages/Home";
 import { MemoryPage } from "@/pages/Memory";
 import { PlaceholderPage } from "@/pages/Placeholder";
@@ -19,8 +21,6 @@ const COMPACT_BREAKPOINT = 860;
 
 const SUMMARIES: Partial<Record<PageId, string>> = {
   automation: "Profiles and automatic cleaning rules are not built yet.",
-  history: "Optimization history is not recorded yet.",
-  about: "Memora 0.1.0",
 };
 
 export default function App() {
@@ -33,8 +33,9 @@ export default function App() {
   const [page, setPage] = useState<PageId>("home");
   const [userCollapsed, setUserCollapsed] = useState(false);
   const [compact, setCompact] = useState(() => window.innerWidth < COMPACT_BREAKPOINT);
-  // Owned here so the Processes page and the Cleaner agree on what is excluded.
-  const [excluded, setExcluded] = useState<number[]>([]);
+  // Exclusions live in settings as process names, so they survive restarts and
+  // keep protecting the same program when its pid changes.
+  const excludedNames = settings.settings?.excludedProcesses ?? [];
 
   useEffect(() => {
     const onResize = () => setCompact(window.innerWidth < COMPACT_BREAKPOINT);
@@ -49,14 +50,14 @@ export default function App() {
       listen("tray://optimize", () => {
         // Show what is happening rather than running invisibly.
         setPage("cleaner");
-        clean.start(["trimWorkingSets"], excluded);
+        clean.start(["trimWorkingSets"], { kind: "tray" });
       }),
     ].map((p) => p.catch(() => () => {}));
 
     return () => {
       subs.forEach((p) => p.then((f) => f()));
     };
-  }, [clean, excluded]);
+  }, [clean]);
 
   // A narrow window forces the rail; above the breakpoint the user's choice wins.
   const collapsed = compact || userCollapsed;
@@ -93,14 +94,23 @@ export default function App() {
           ) : page === "memory" ? (
             <MemoryPage memory={memory} />
           ) : page === "cleaner" ? (
-            <CleanerPage clean={clean} excluded={excluded} />
+            <CleanerPage clean={clean} excludedNames={excludedNames} />
           ) : page === "processes" ? (
             <ProcessesPage
-              excluded={excluded}
-              onToggleExcluded={(pid) =>
-                setExcluded((s) => (s.includes(pid) ? s.filter((p) => p !== pid) : [...s, pid]))
-              }
+              excludedNames={excludedNames}
+              onToggleExcluded={(name) => {
+                const key = name.toLowerCase();
+                settings.update({
+                  excludedProcesses: excludedNames.includes(key)
+                    ? excludedNames.filter((n) => n !== key)
+                    : [...excludedNames, key],
+                });
+              }}
             />
+          ) : page === "history" ? (
+            <HistoryPage />
+          ) : page === "about" ? (
+            <AboutPage elevated={clean.elevated} />
           ) : page === "settings" ? (
             <SettingsPage state={settings} />
           ) : (

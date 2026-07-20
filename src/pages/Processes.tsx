@@ -34,11 +34,11 @@ const COLUMNS: Column[] = [
 const REFRESH_MS = 2000;
 
 export function ProcessesPage({
-  excluded,
+  excludedNames,
   onToggleExcluded,
 }: {
-  excluded: number[];
-  onToggleExcluded: (pid: number) => void;
+  excludedNames: string[];
+  onToggleExcluded: (name: string) => void;
 }) {
   const [rows, setRows] = useState<ProcessInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -125,9 +125,11 @@ export function ProcessesPage({
         { id: "trim", label: "Trim memory", disabled: !target.accessible },
         {
           id: "exclude",
-          label: excluded.includes(target.pid)
-            ? "Include in cleaning"
-            : "Exclude from cleaning",
+          // Excluding by name covers every instance of the program, which is
+          // what a user picking "this app" means.
+          label: excludedNames.includes(target.name.toLowerCase())
+            ? `Include ${target.name} in cleaning`
+            : `Exclude ${target.name} from cleaning`,
         },
         { id: "copy", label: "Copy details" },
         { id: "end", label: "End task", danger: true, disabled: !target.accessible },
@@ -149,7 +151,7 @@ export function ProcessesPage({
         }
         break;
       case "exclude":
-        onToggleExcluded(target.pid);
+        onToggleExcluded(target.name);
         break;
       case "copy":
         await navigator.clipboard
@@ -232,7 +234,7 @@ export function ProcessesPage({
           <tbody>
             {visible.map((p, i) => {
               const isSelected = selected.has(p.pid);
-              const isExcluded = excluded.includes(p.pid);
+              const isExcluded = excludedNames.includes(p.name.toLowerCase());
               return (
                 <tr
                   key={p.pid}

@@ -84,6 +84,18 @@ fn update_settings(
     Ok(saved)
 }
 
+#[tauri::command]
+fn list_history(
+    store: tauri::State<'_, system::history::Store>,
+) -> Vec<system::history::Record> {
+    store.list()
+}
+
+#[tauri::command]
+fn clear_history(store: tauri::State<'_, system::history::Store>) -> Result<(), String> {
+    store.clear()
+}
+
 /// Formats bytes for a toast, where there is no room for a units table.
 fn short_bytes(bytes: i64) -> String {
     let gb = 1024f64.powi(3);
@@ -191,7 +203,11 @@ fn start_optimization(
     state: tauri::State<'_, CleanTask>,
     methods: Vec<system::clean::Method>,
     excluded: Vec<u32>,
+    source: Option<system::history::Source>,
 ) -> Result<(), String> {
+    // Persisted name-based exclusions always apply, on top of any pids the
+    // caller passed for this run only.
+    let excluded_names = app.state::<system::settings::Store>().get().excluded_processes;
     let mut slot = state.0.lock().unwrap();
     if slot.as_ref().is_some_and(|f| !f.load(Ordering::Relaxed)) {
         return Err("An optimization is already running".into());
@@ -203,7 +219,7 @@ fn start_optimization(
 
     std::thread::spawn(move || {
         let progress_app = app.clone();
-        let result = system::clean::run(&methods, &excluded, cancel, move |p| {
+        let result = system::clean::run(&methods, &excluded, &excluded_names, cancel, move |p| {
             let _ = progress_app.emit("clean://progress", p);
         });
 
@@ -212,6 +228,18 @@ fn start_optimization(
                 let _ = app.emit("clean://done", &report);
                 notify_result(&app, &report);
 
+                // Recorded before the delayed measurement so a run survives in
+                // history even if Memora exits during the 30 second wait.
+                let record = system::history::Record::from_report(
+                    source.unwrap_or(system::history::Source::Manual),
+                    &methods,
+                    &report,
+                );
+                let at = record.at;
+                if let Err(e) = app.state::<system::history::Store>().append(&record) {
+                    eprintln!("[memora] history append failed: {e}");
+                }
+
                 // Working-set trimming moves pages to the standby list, and the
                 // OS faults them back as processes resume. Re-measuring after a
                 // delay is the only honest way to report what actually stuck.
@@ -219,15 +247,25 @@ fn start_optimization(
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_secs(30));
                     if let Ok(later) = system::memory::snapshot() {
-                        let _ = app.emit(
-                            "clean://settled",
-                            later.physical_available as i64 - available_before as i64,
-                        );
+                        let settled = later.physical_available as i64 - available_before as i64;
+                        let _ = app.emit("clean://settled", settled);
+                        let _ = app.state::<system::history::Store>().set_settled(at, settled);
                     }
                 });
             }
             Err(e) => {
                 notify_failure(&app, &e);
+                let failed = system::history::Record {
+                    at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0),
+                    source: source.unwrap_or(system::history::Source::Manual),
+                    outcome: system::history::RunOutcome::Failed { error: e.clone() },
+                    methods: methods.clone(),
+                    ..Default::default()
+                };
+                let _ = app.state::<system::history::Store>().append(&failed);
                 let _ = app.emit("clean://failed", e);
             }
         }
@@ -257,6 +295,17 @@ fn spawn_sampler(app: tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be registered first. Two instances would race on settings.json
+        // and history.jsonl, and would show two tray meters.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // A second launch surfaces the running window instead of starting
+            // over — the same behaviour as clicking the tray icon.
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -272,6 +321,8 @@ pub fn run() {
             is_elevated,
             get_settings,
             update_settings,
+            list_history,
+            clear_history,
             start_optimization,
             cancel_optimization
         ])
@@ -285,6 +336,7 @@ pub fn run() {
                 .app_config_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
             app.manage(system::settings::Store::load(config_dir.join("settings.json")));
+            app.manage(system::history::Store::new(config_dir.join("history.jsonl")));
 
             // Mica is the main-surface backdrop per the design rules. It needs
             // Windows 11 build 22000+; older builds fall back to a solid theme

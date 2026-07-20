@@ -37,6 +37,13 @@ pub struct Settings {
     pub close_to_tray: bool,
     pub start_with_windows: bool,
     pub show_optimization_notifications: bool,
+
+    /// Process names excluded from every cleaning method, lowercased.
+    ///
+    /// Names, not pids: pids are reassigned across reboots, so a persisted pid
+    /// list would eventually protect an unrelated process — or fail to protect
+    /// the one the user chose.
+    pub excluded_processes: Vec<String>,
 }
 
 impl Default for Settings {
@@ -56,6 +63,7 @@ impl Default for Settings {
             close_to_tray: true,
             start_with_windows: false,
             show_optimization_notifications: true,
+            excluded_processes: Vec::new(),
         }
     }
 }
@@ -63,6 +71,14 @@ impl Default for Settings {
 impl Settings {
     /// Clamps values that would otherwise produce a nonsensical tray.
     pub fn sanitized(mut self) -> Self {
+        // Names are matched case-insensitively, so store one canonical form.
+        for name in &mut self.excluded_processes {
+            *name = name.trim().to_ascii_lowercase();
+        }
+        self.excluded_processes.retain(|n| !n.is_empty());
+        self.excluded_processes.sort();
+        self.excluded_processes.dedup();
+
         self.tray_interval_secs = self.tray_interval_secs.clamp(1, 30);
         self.warning_threshold = self.warning_threshold.clamp(1, 99);
         self.high_threshold = self.high_threshold.clamp(self.warning_threshold + 1, 99);

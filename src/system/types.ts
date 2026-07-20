@@ -99,6 +99,38 @@ export interface Settings {
   closeToTray: boolean;
   startWithWindows: boolean;
   showOptimizationNotifications: boolean;
+  /** Process names, lowercased. Names not pids: pids change across reboots. */
+  excludedProcesses: string[];
+}
+
+/** Mirrors `Source` in src-tauri/src/system/history.rs. */
+export type HistorySource =
+  | { kind: "manual" }
+  | { kind: "tray" }
+  | { kind: "automation"; rule: string };
+
+/** Mirrors `RunOutcome`. */
+export type RunOutcome =
+  | { kind: "completed" }
+  | { kind: "cancelled" }
+  | { kind: "failed"; error: string }
+  | { kind: "blocked"; gate: string };
+
+/** Mirrors `Record` in src-tauri/src/system/history.rs. */
+export interface HistoryRecord {
+  at: number;
+  source: HistorySource;
+  outcome: RunOutcome;
+  methods: CleanMethod[];
+  availableBefore: number;
+  recoveredImmediate: number;
+  /** Null means not measured — never coerce to zero. */
+  recoveredSettled: number | null;
+  processesTrimmed: number;
+  processesSkipped: number;
+  errors: number;
+  durationMs: number;
+  unavailable: string[];
 }
 
 export type PageId =

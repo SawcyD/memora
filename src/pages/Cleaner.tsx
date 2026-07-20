@@ -55,11 +55,11 @@ const METHODS: MethodSpec[] = [
 
 export function CleanerPage({
   clean,
-  excluded,
+  excludedNames,
 }: {
   clean: CleanState;
-  /** Pids the user excluded from the Processes page; skipped by every method. */
-  excluded: number[];
+  /** Process names excluded from the Processes page; skipped by every method. */
+  excludedNames: string[];
 }) {
   const [enabled, setEnabled] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(METHODS.map((m) => [m.id, m.defaultOn])),
@@ -126,13 +126,14 @@ export function CleanerPage({
           <Button
             accent
             disabled={selected.length === 0}
-            onClick={() => clean.start(selected, excluded)}
+            onClick={() => clean.start(selected)}
           >
             Optimize now
           </Button>
-          {excluded.length > 0 && (
+          {excludedNames.length > 0 && (
             <p className="mt-2 text-[12px] text-[var(--text-secondary)]">
-              {excluded.length} process{excluded.length === 1 ? "" : "es"} excluded from cleaning.
+              {excludedNames.length} process name{excludedNames.length === 1 ? "" : "s"} excluded
+              from cleaning.
             </p>
           )}
         </div>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { CleanMethod, CleanProgress, CleanReport } from "./types";
+import type { CleanMethod, CleanProgress, CleanReport, HistorySource } from "./types";
 
 export type CleanPhase = "idle" | "running" | "done";
 
@@ -13,7 +13,7 @@ export interface CleanState {
   settled: number | null;
   error: string | null;
   elevated: boolean;
-  start: (methods: CleanMethod[], excluded?: number[]) => void;
+  start: (methods: CleanMethod[], source?: HistorySource) => void;
   cancel: () => void;
   dismiss: () => void;
 }
@@ -62,7 +62,7 @@ export function useClean(): CleanState {
     };
   }, []);
 
-  const start = useCallback((methods: CleanMethod[], excluded: number[] = []) => {
+  const start = useCallback((methods: CleanMethod[], source: HistorySource = { kind: "manual" }) => {
     runId.current += 1;
     setPhase("running");
     setProgress(null);
@@ -70,7 +70,9 @@ export function useClean(): CleanState {
     setSettled(null);
     setError(null);
 
-    invoke("start_optimization", { methods, excluded }).catch((e) => {
+    // Name-based exclusions are applied by the backend from settings; pids are
+    // only for a one-off caller, which nothing currently is.
+    invoke("start_optimization", { methods, excluded: [], source }).catch((e) => {
       setError(String(e));
       setPhase("idle");
     });

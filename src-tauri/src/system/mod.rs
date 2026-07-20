@@ -3,6 +3,7 @@
 
 pub mod accent;
 pub mod clean;
+pub mod history;
 pub mod memory;
 pub mod process;
 pub mod settings;

@@ -124,6 +124,34 @@ pub struct CleanReport {
 /// Cancellation flag shared with the command layer.
 pub type Cancel = Arc<AtomicBool>;
 
+/// Resolves the effective skip list for a run.
+///
+/// Name exclusions are matched at run time rather than stored as pids, so an
+/// exclusion keeps protecting the same program across restarts. Matching is
+/// case-insensitive on both sides: `Settings::sanitized` lowercases what it
+/// stores, but this is a public entry point and must not silently fail to
+/// protect a process because a caller passed mixed case.
+pub fn resolve_excluded(
+    processes: &[ProcessInfo],
+    excluded_pids: &[u32],
+    excluded_names: &[String],
+) -> Vec<u32> {
+    let names: Vec<String> = excluded_names
+        .iter()
+        .map(|n| n.trim().to_ascii_lowercase())
+        .filter(|n| !n.is_empty())
+        .collect();
+
+    let mut skip = excluded_pids.to_vec();
+    skip.extend(processes.iter().filter_map(|p| {
+        let name = p.name.to_ascii_lowercase();
+        names.iter().any(|n| *n == name).then_some(p.pid)
+    }));
+    skip.sort_unstable();
+    skip.dedup();
+    skip
+}
+
 #[cfg(windows)]
 mod imp {
     use super::*;
@@ -352,6 +380,7 @@ pub fn trim_process(_pid: u32) -> Result<u64, String> {
 pub fn run(
     methods: &[Method],
     excluded: &[u32],
+    excluded_names: &[String],
     cancel: Cancel,
     on_progress: impl FnMut(Progress),
 ) -> Result<CleanReport, String> {
@@ -363,7 +392,9 @@ pub fn run(
 
     if methods.contains(&Method::TrimWorkingSets) {
         let processes = process::enumerate()?;
-        details = imp::trim_working_sets(&processes, excluded, &cancel, on_progress);
+
+        let skip = resolve_excluded(&processes, excluded, excluded_names);
+        details = imp::trim_working_sets(&processes, &skip, &cancel, on_progress);
     }
 
     // Privileged methods run after the trim so the standby list they purge
@@ -419,6 +450,7 @@ pub fn run(
 pub fn run(
     _methods: &[Method],
     _excluded: &[u32],
+    _excluded_names: &[String],
     _cancel: Cancel,
     _on_progress: impl FnMut(Progress),
 ) -> Result<CleanReport, String> {
@@ -505,7 +537,7 @@ mod tests {
     #[test]
     fn empty_run_still_reports_measurements() {
         let cancel: Cancel = Arc::new(AtomicBool::new(false));
-        let report = run(&[], &[], cancel, |_| {}).expect("run");
+        let report = run(&[], &[], &[], cancel, |_| {}).expect("run");
 
         assert!(report.available_before > 0);
         assert!(report.available_after > 0);
@@ -527,12 +559,60 @@ mod tests {
             return; // Nothing to assert when the privilege is actually held.
         }
         let cancel: Cancel = Arc::new(AtomicBool::new(false));
-        let report = run(&[Method::PurgeStandbyList], &[], cancel, |_| {}).expect("run");
+        let report = run(&[Method::PurgeStandbyList], &[], &[], cancel, |_| {}).expect("run");
         assert_eq!(report.unavailable.len(), 1);
         assert!(
             report.unavailable[0].contains("administrator"),
             "reason should name the requirement: {}",
             report.unavailable[0]
         );
+    }
+
+    fn fake(pid: u32, name: &str) -> ProcessInfo {
+        ProcessInfo {
+            pid,
+            name: name.into(),
+            working_set: 1024,
+            commit: 1024,
+            threads: 1,
+            handles: 1,
+            cpu_percent: None,
+            accessible: true,
+        }
+    }
+
+    /// Resolution is tested directly rather than by running a real trim: a
+    /// system-wide trim is a live side effect and does not belong in a suite.
+    #[test]
+    fn name_exclusions_match_case_insensitively() {
+        let procs = vec![fake(10, "Game.exe"), fake(11, "editor.exe"), fake(12, "other.exe")];
+
+        let skip = resolve_excluded(&procs, &[], &["GAME.EXE".into()]);
+        assert_eq!(skip, vec![10], "matching must ignore case on both sides");
+
+        let skip = resolve_excluded(&procs, &[], &["  Editor.EXE  ".into()]);
+        assert_eq!(skip, vec![11], "surrounding whitespace must not defeat a match");
+    }
+
+    /// A name protects every instance, which is the point of naming rather
+    /// than pinning a pid.
+    #[test]
+    fn name_exclusions_cover_every_instance() {
+        let procs = vec![fake(10, "chrome.exe"), fake(11, "chrome.exe"), fake(12, "other.exe")];
+        let skip = resolve_excluded(&procs, &[], &["chrome.exe".into()]);
+        assert_eq!(skip, vec![10, 11]);
+    }
+
+    #[test]
+    fn pid_and_name_exclusions_combine_without_duplicates() {
+        let procs = vec![fake(10, "game.exe"), fake(11, "other.exe")];
+        let skip = resolve_excluded(&procs, &[10, 11], &["game.exe".into()]);
+        assert_eq!(skip, vec![10, 11], "pid 10 is named too; it must appear once");
+    }
+
+    #[test]
+    fn empty_names_do_not_match_everything() {
+        let procs = vec![fake(10, "game.exe")];
+        assert!(resolve_excluded(&procs, &[], &["".into(), "   ".into()]).is_empty());
     }
 }

@@ -2,4 +2,6 @@
 //! reused from the tray worker without dragging the app handle around.
 
 pub mod accent;
+pub mod clean;
 pub mod memory;
+pub mod process;

@@ -3,7 +3,13 @@ import { Button, InfoRow, SectionHeader } from "@/components/primitives";
 import { formatBytes, formatBytesPair, formatPercent } from "@/system/format";
 import type { MemoryState } from "@/system/useMemory";
 
-export function HomePage({ memory }: { memory: MemoryState }) {
+export function HomePage({
+  memory,
+  onOptimize,
+}: {
+  memory: MemoryState;
+  onOptimize: () => void;
+}) {
   const { current, history, error } = memory;
 
   if (error) {
@@ -33,7 +39,7 @@ export function HomePage({ memory }: { memory: MemoryState }) {
           </div>
         </div>
 
-        <Button accent disabled={!current}>
+        <Button accent disabled={!current} onClick={onOptimize}>
           Optimize memory
         </Button>
       </div>

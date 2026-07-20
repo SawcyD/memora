@@ -16,6 +16,26 @@ pub struct Accent {
     pub high_contrast: bool,
 }
 
+pub type Rgb = (u8, u8, u8);
+
+/// Parses `#rrggbb`. Falls back to the Windows default accent on malformed
+/// input, which only happens if a caller hand-builds an `Accent`.
+pub fn parse_rgb(hex: &str) -> Rgb {
+    let h = hex.trim_start_matches('#');
+    if h.len() != 6 {
+        return (0x00, 0x78, 0xd4);
+    }
+    let c = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(0);
+    (c(0), c(2), c(4))
+}
+
+impl Accent {
+    /// The accent variant that stays legible on the tray's dark-ish taskbar.
+    pub fn tray_rgb(&self) -> Rgb {
+        parse_rgb(&self.accent_light2)
+    }
+}
+
 impl Default for Accent {
     fn default() -> Self {
         // Windows' own default accent ("Blue"), used when UISettings is unavailable.

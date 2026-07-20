@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { NavigationView, FOOTER_ITEMS, NAV_ITEMS } from "@/components/NavigationView";
 import { TitleBar } from "@/components/TitleBar";
+import { CleanerPage } from "@/pages/Cleaner";
 import { HomePage } from "@/pages/Home";
 import { PlaceholderPage } from "@/pages/Placeholder";
 import type { PageId } from "@/system/types";
+import { useClean } from "@/system/useClean";
 import { useMemory } from "@/system/useMemory";
 import { useSystemTheme } from "@/system/useTheme";
 
@@ -13,7 +16,6 @@ const COMPACT_BREAKPOINT = 860;
 const SUMMARIES: Partial<Record<PageId, string>> = {
   memory: "The detailed memory breakdown and multi-range graph are not built yet.",
   processes: "The process grid is not built yet.",
-  cleaner: "Cleaning methods and the optimization run are not built yet.",
   automation: "Profiles and automatic cleaning rules are not built yet.",
   history: "Optimization history is not recorded yet.",
   settings: "Settings, including tray behavior, are not built yet.",
@@ -23,6 +25,8 @@ const SUMMARIES: Partial<Record<PageId, string>> = {
 export default function App() {
   useSystemTheme();
   const memory = useMemory();
+  // Lives at the app level so a run keeps going while the user browses pages.
+  const clean = useClean();
 
   const [page, setPage] = useState<PageId>("home");
   const [userCollapsed, setUserCollapsed] = useState(false);
@@ -32,6 +36,16 @@ export default function App() {
     const onResize = () => setCompact(window.innerWidth < COMPACT_BREAKPOINT);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Double-clicking the tray icon opens Memora straight to a given page.
+  useEffect(() => {
+    const unlisten = listen<PageId>("tray://navigate", (e) => setPage(e.payload)).catch(
+      () => () => {},
+    );
+    return () => {
+      unlisten.then((f) => f());
+    };
   }, []);
 
   // A narrow window forces the rail; above the breakpoint the user's choice wins.
@@ -65,7 +79,9 @@ export default function App() {
           ].join(" ")}
         >
           {page === "home" ? (
-            <HomePage memory={memory} />
+            <HomePage memory={memory} onOptimize={() => setPage("cleaner")} />
+          ) : page === "cleaner" ? (
+            <CleanerPage clean={clean} />
           ) : (
             <PlaceholderPage title={title} summary={SUMMARIES[page] ?? ""} />
           )}

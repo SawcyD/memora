@@ -84,6 +84,92 @@ fn update_settings(
     Ok(saved)
 }
 
+/// Formats bytes for a toast, where there is no room for a units table.
+fn short_bytes(bytes: i64) -> String {
+    let gb = 1024f64.powi(3);
+    let mb = 1024f64.powi(2);
+    let v = bytes.unsigned_abs() as f64;
+    if v >= gb {
+        format!("{:.1} GB", v / gb)
+    } else {
+        format!("{:.0} MB", v / mb)
+    }
+}
+
+/// Sends a Windows toast for a finished run, if the user asked for them.
+///
+/// The wording says "immediately" on purpose: trimming moves pages to the
+/// standby list and the increase decays, so a bare "freed X" in a notification
+/// the user cannot click into would overstate the result.
+fn result_notification(report: &system::clean::CleanReport) -> (&'static str, String) {
+    let title = if report.cancelled {
+        "Memora stopped optimizing memory"
+    } else {
+        "Memora finished optimizing memory"
+    };
+
+    let change = if report.recovered >= 0 {
+        format!("Available memory rose {} immediately", short_bytes(report.recovered))
+    } else {
+        // A negative delta is normal when the system allocated during the run;
+        // reporting it as a gain would be a lie.
+        format!("Available memory fell {} during the run", short_bytes(report.recovered))
+    };
+
+    let mut body = format!(
+        "{change}. {} processes trimmed, {} skipped, in {:.1} s.",
+        report.processes_trimmed,
+        report.processes_skipped,
+        report.duration_ms as f64 / 1000.0,
+    );
+    if !report.unavailable.is_empty() {
+        body.push_str(" Some methods could not run.");
+    }
+
+    (title, body)
+}
+
+/// Note on delivery: Windows only renders a toast for an app whose
+/// AppUserModelID is backed by a Start Menu shortcut, which the installer
+/// creates. Running the bare exe from `target/` has no such shortcut, so the
+/// shell accepts the toast and silently discards it — `show()` still returns
+/// `Ok`, and no key appears under
+/// `HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings`.
+/// Notifications therefore cannot be observed from `tauri dev`; test them
+/// against an installed build.
+fn notify_result(app: &tauri::AppHandle, report: &system::clean::CleanReport) {
+    use tauri_plugin_notification::NotificationExt;
+
+    if !app
+        .state::<system::settings::Store>()
+        .get()
+        .show_optimization_notifications
+    {
+        return;
+    }
+
+    let (title, body) = result_notification(report);
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        eprintln!("[memora] notification failed: {e}");
+    }
+}
+
+fn notify_failure(app: &tauri::AppHandle, error: &str) {
+    use tauri_plugin_notification::NotificationExt;
+
+    // Failures are reported regardless of the toggle: it governs routine
+    // result notifications, and silently swallowing an error is worse.
+    if let Err(e) = app
+        .notification()
+        .builder()
+        .title("Memora could not optimize memory")
+        .body(error)
+        .show()
+    {
+        eprintln!("[memora] failure notification failed: {e}");
+    }
+}
+
 /// Shared cancellation flag for the in-flight optimization, if any.
 #[derive(Default)]
 struct CleanTask(Mutex<Option<system::clean::Cancel>>);
@@ -124,6 +210,7 @@ fn start_optimization(
         match result {
             Ok(report) => {
                 let _ = app.emit("clean://done", &report);
+                notify_result(&app, &report);
 
                 // Working-set trimming moves pages to the standby list, and the
                 // OS faults them back as processes resume. Re-measuring after a
@@ -140,6 +227,7 @@ fn start_optimization(
                 });
             }
             Err(e) => {
+                notify_failure(&app, &e);
                 let _ = app.emit("clean://failed", e);
             }
         }
@@ -170,6 +258,7 @@ fn spawn_sampler(app: tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(CleanTask::default())
         .manage(ProcessSampler::default())
@@ -256,4 +345,69 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod notification_tests {
+    use super::*;
+    use system::clean::CleanReport;
+
+    fn report(recovered: i64, cancelled: bool) -> CleanReport {
+        CleanReport {
+            available_before: 8_000_000_000,
+            available_after: (8_000_000_000i64 + recovered) as u64,
+            recovered,
+            processes_trimmed: 18,
+            processes_skipped: 7,
+            errors: 0,
+            duration_ms: 800,
+            cancelled,
+            details: Vec::new(),
+            unavailable: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn gains_are_described_as_immediate() {
+        let (title, body) = result_notification(&report(1_288_490_188, false));
+        assert_eq!(title, "Memora finished optimizing memory");
+        // The qualifier is the whole point: the increase decays.
+        assert!(body.contains("immediately"), "{body}");
+        assert!(body.contains("1.2 GB"), "{body}");
+        assert!(body.contains("18 processes trimmed"), "{body}");
+        assert!(body.contains("0.8 s"), "{body}");
+    }
+
+    /// A run can end with less memory available than it started with. That must
+    /// never be phrased as a gain.
+    #[test]
+    fn losses_are_not_reported_as_gains() {
+        let (_, body) = result_notification(&report(-500_000_000, false));
+        assert!(body.contains("fell"), "{body}");
+        assert!(!body.contains("rose"), "{body}");
+        // No stray minus sign: the direction is carried by the wording.
+        assert!(!body.contains("-"), "{body}");
+    }
+
+    #[test]
+    fn cancellation_does_not_claim_completion() {
+        let (title, _) = result_notification(&report(0, true));
+        assert!(!title.contains("finished"), "{title}");
+        assert!(title.contains("stopped"), "{title}");
+    }
+
+    #[test]
+    fn unavailable_methods_are_mentioned() {
+        let mut r = report(0, false);
+        r.unavailable.push("Clear standby memory: requires administrator".into());
+        let (_, body) = result_notification(&r);
+        assert!(body.contains("could not run"), "{body}");
+    }
+
+    #[test]
+    fn byte_formatting_picks_sane_units() {
+        assert_eq!(short_bytes(1_288_490_188), "1.2 GB");
+        assert_eq!(short_bytes(52_428_800), "50 MB");
+        assert_eq!(short_bytes(-52_428_800), "50 MB");
+    }
 }

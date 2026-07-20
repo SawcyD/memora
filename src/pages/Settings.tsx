@@ -187,7 +187,7 @@ export function SettingsPage({ state }: { state: SettingsState }) {
         {toggle(
           "showOptimizationNotifications",
           "Show optimization notifications",
-          "Displays a Windows notification with the measured result after an optimization.",
+          "Shows a Windows notification with the measured result after an optimization. Failures are always reported, whatever this is set to.",
         )}
       </SettingsSection>
     </div>

@@ -15,9 +15,8 @@ dist-ssr
 # Scratch output (icon generation intermediates, etc.)
 tmp
 
-# Agent configuration and instructions (kept local)
+# Agent configuration (kept local)
 .claude
-CLAUDE.md
 AGENTS.md
 
 # Editor directories and files

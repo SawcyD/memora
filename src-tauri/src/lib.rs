@@ -18,9 +18,28 @@ fn system_accent() -> Accent {
     system::accent::accent()
 }
 
+/// Holds the previous CPU reading so successive calls can report a rate.
+#[derive(Default)]
+struct ProcessSampler(Mutex<Option<system::process::Sampler>>);
+
 #[tauri::command]
-fn list_processes() -> Result<Vec<system::process::ProcessInfo>, String> {
-    system::process::enumerate()
+fn list_processes(
+    state: tauri::State<'_, ProcessSampler>,
+) -> Result<Vec<system::process::ProcessInfo>, String> {
+    let mut slot = state.0.lock().unwrap();
+    slot.get_or_insert_with(system::process::Sampler::new).sample()
+}
+
+/// Trims a single process, for the Processes page context menu.
+#[tauri::command]
+fn trim_process(pid: u32) -> Result<u64, String> {
+    system::clean::trim_process(pid)
+}
+
+/// Terminates a process. The UI must confirm before calling this.
+#[tauri::command]
+fn end_process(pid: u32) -> Result<(), String> {
+    system::process::terminate(pid)
 }
 
 /// The UI disables the privileged methods when this is false, rather than
@@ -115,10 +134,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(CleanTask::default())
+        .manage(ProcessSampler::default())
         .invoke_handler(tauri::generate_handler![
             memory_snapshot,
             system_accent,
             list_processes,
+            trim_process,
+            end_process,
             is_elevated,
             start_optimization,
             cancel_optimization

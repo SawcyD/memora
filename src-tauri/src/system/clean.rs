@@ -316,6 +316,34 @@ mod imp {
     }
 }
 
+/// Trims one process by pid, returning its working set afterwards.
+///
+/// Used by the Processes page context menu, where the user picked a specific
+/// process rather than running a full pass.
+#[cfg(windows)]
+pub fn trim_process(pid: u32) -> Result<u64, String> {
+    let target = process::enumerate()?
+        .into_iter()
+        .find(|p| p.pid == pid)
+        .ok_or_else(|| format!("Process {pid} is no longer running"))?;
+
+    let cancel: Cancel = Arc::new(AtomicBool::new(false));
+    let results = imp::trim_working_sets(&[target], &[], &cancel, |_| {});
+
+    match results.first() {
+        Some(r) if r.outcome == Outcome::Trimmed => Ok(r.working_set_after),
+        Some(r) if r.outcome == Outcome::Skipped => {
+            Err("This process is protected and cannot be trimmed".into())
+        }
+        _ => Err("Failed to trim this process".into()),
+    }
+}
+
+#[cfg(not(windows))]
+pub fn trim_process(_pid: u32) -> Result<u64, String> {
+    Err("Only available on Windows".into())
+}
+
 /// Runs an optimization pass.
 ///
 /// `on_progress` is called from the calling thread; the command layer runs this

@@ -5,6 +5,7 @@ import { TitleBar } from "@/components/TitleBar";
 import { CleanerPage } from "@/pages/Cleaner";
 import { HomePage } from "@/pages/Home";
 import { PlaceholderPage } from "@/pages/Placeholder";
+import { ProcessesPage } from "@/pages/Processes";
 import type { PageId } from "@/system/types";
 import { useClean } from "@/system/useClean";
 import { useMemory } from "@/system/useMemory";
@@ -15,7 +16,6 @@ const COMPACT_BREAKPOINT = 860;
 
 const SUMMARIES: Partial<Record<PageId, string>> = {
   memory: "The detailed memory breakdown and multi-range graph are not built yet.",
-  processes: "The process grid is not built yet.",
   automation: "Profiles and automatic cleaning rules are not built yet.",
   history: "Optimization history is not recorded yet.",
   settings: "Settings, including tray behavior, are not built yet.",
@@ -31,6 +31,8 @@ export default function App() {
   const [page, setPage] = useState<PageId>("home");
   const [userCollapsed, setUserCollapsed] = useState(false);
   const [compact, setCompact] = useState(() => window.innerWidth < COMPACT_BREAKPOINT);
+  // Owned here so the Processes page and the Cleaner agree on what is excluded.
+  const [excluded, setExcluded] = useState<number[]>([]);
 
   useEffect(() => {
     const onResize = () => setCompact(window.innerWidth < COMPACT_BREAKPOINT);
@@ -81,7 +83,14 @@ export default function App() {
           {page === "home" ? (
             <HomePage memory={memory} onOptimize={() => setPage("cleaner")} />
           ) : page === "cleaner" ? (
-            <CleanerPage clean={clean} />
+            <CleanerPage clean={clean} excluded={excluded} />
+          ) : page === "processes" ? (
+            <ProcessesPage
+              excluded={excluded}
+              onToggleExcluded={(pid) =>
+                setExcluded((s) => (s.includes(pid) ? s.filter((p) => p !== pid) : [...s, pid]))
+              }
+            />
           ) : (
             <PlaceholderPage title={title} summary={SUMMARIES[page] ?? ""} />
           )}

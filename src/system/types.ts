@@ -27,9 +27,13 @@ export interface ProcessInfo {
   pid: number;
   name: string;
   workingSet: number;
-  privateWorkingSet: number;
+  /** Private commit charge. Private working set is not exposed by the API
+   *  Memora uses, so it is deliberately not shown — see process.rs. */
   commit: number;
   threads: number;
+  handles: number;
+  /** Null until a second sample exists to difference against — unknown, not 0. */
+  cpuPercent: number | null;
   accessible: boolean;
 }
 

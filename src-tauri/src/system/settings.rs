@@ -44,6 +44,9 @@ pub struct Settings {
     /// list would eventually protect an unrelated process — or fail to protect
     /// the one the user chose.
     pub excluded_processes: Vec<String>,
+
+    /// Automatic cleaning. Disabled by default; see system::automation.
+    pub automation: super::automation::Config,
 }
 
 impl Default for Settings {
@@ -64,6 +67,7 @@ impl Default for Settings {
             start_with_windows: false,
             show_optimization_notifications: true,
             excluded_processes: Vec::new(),
+            automation: super::automation::Config::default(),
         }
     }
 }
@@ -79,6 +83,7 @@ impl Settings {
         self.excluded_processes.sort();
         self.excluded_processes.dedup();
 
+        self.automation = self.automation.clone().sanitized();
         self.tray_interval_secs = self.tray_interval_secs.clamp(1, 30);
         self.warning_threshold = self.warning_threshold.clamp(1, 99);
         self.high_threshold = self.high_threshold.clamp(self.warning_threshold + 1, 99);

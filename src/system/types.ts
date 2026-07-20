@@ -101,6 +101,7 @@ export interface Settings {
   showOptimizationNotifications: boolean;
   /** Process names, lowercased. Names not pids: pids change across reboots. */
   excludedProcesses: string[];
+  automation: AutomationConfig;
 }
 
 /** Mirrors `Source` in src-tauri/src/system/history.rs. */
@@ -131,6 +132,33 @@ export interface HistoryRecord {
   errors: number;
   durationMs: number;
   unavailable: string[];
+}
+
+/** Mirrors `Trigger` in src-tauri/src/system/automation.rs. */
+export type Trigger =
+  | { kind: "usageAbove"; percent: number; sustainedSecs: number }
+  | { kind: "scheduled"; everyMins: number }
+  | { kind: "systemIdle"; idleMins: number };
+
+export interface AutomationRule {
+  id: string;
+  enabled: boolean;
+  trigger: Trigger;
+  ineffectiveLimit: number;
+}
+
+export interface AutomationProfile {
+  name: string;
+  methods: CleanMethod[];
+  rules: AutomationRule[];
+  minIntervalSecs: number;
+}
+
+export interface AutomationConfig {
+  enabled: boolean;
+  pausedUntil: number | null;
+  activeProfile: string;
+  profiles: AutomationProfile[];
 }
 
 export type PageId =

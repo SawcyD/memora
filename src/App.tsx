@@ -4,6 +4,7 @@ import { NavigationView, FOOTER_ITEMS, NAV_ITEMS } from "@/components/Navigation
 import { TitleBar } from "@/components/TitleBar";
 import { CleanerPage } from "@/pages/Cleaner";
 import { AboutPage } from "@/pages/About";
+import { AutomationPage } from "@/pages/Automation";
 import { HistoryPage } from "@/pages/History";
 import { HomePage } from "@/pages/Home";
 import { MemoryPage } from "@/pages/Memory";
@@ -19,9 +20,7 @@ import { useSystemTheme } from "@/system/useTheme";
 /** Width below which the navigation pane auto-collapses to an icon rail. */
 const COMPACT_BREAKPOINT = 860;
 
-const SUMMARIES: Partial<Record<PageId, string>> = {
-  automation: "Profiles and automatic cleaning rules are not built yet.",
-};
+const SUMMARIES: Partial<Record<PageId, string>> = {};
 
 export default function App() {
   useSystemTheme();
@@ -47,6 +46,7 @@ export default function App() {
   useEffect(() => {
     const subs = [
       listen<PageId>("tray://navigate", (e) => setPage(e.payload)),
+      listen<string>("automation://run", () => setPage("cleaner")),
       listen("tray://optimize", () => {
         // Show what is happening rather than running invisibly.
         setPage("cleaner");
@@ -107,6 +107,8 @@ export default function App() {
                 });
               }}
             />
+          ) : page === "automation" ? (
+            <AutomationPage state={settings} />
           ) : page === "history" ? (
             <HistoryPage />
           ) : page === "about" ? (

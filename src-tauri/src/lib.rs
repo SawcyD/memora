@@ -186,6 +186,47 @@ fn notify_failure(app: &tauri::AppHandle, error: &str) {
 #[derive(Default)]
 struct CleanTask(Mutex<Option<system::clean::Cancel>>);
 
+impl CleanTask {
+    fn in_flight(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|f| !f.load(Ordering::Relaxed))
+    }
+}
+
+/// Automation scheduling state. Separate from the config, which lives in
+/// settings: this is runtime bookkeeping and is deliberately not persisted, so
+/// a restart never inherits a stale cooldown or suspension.
+#[derive(Default)]
+struct AutomationEngine(Mutex<system::automation::Engine>);
+
+#[tauri::command]
+fn resume_rule(engine: tauri::State<'_, AutomationEngine>, rule: String) {
+    engine.0.lock().unwrap().resume(&rule);
+}
+
+/// Rules the engine has suspended for repeatedly recovering little memory.
+#[tauri::command]
+fn suspended_rules(
+    engine: tauri::State<'_, AutomationEngine>,
+    store: tauri::State<'_, system::settings::Store>,
+) -> Vec<String> {
+    let config = store.get().automation;
+    let engine = engine.0.lock().unwrap();
+    config
+        .active()
+        .map(|p| {
+            p.rules
+                .iter()
+                .filter(|r| engine.is_suspended(r))
+                .map(|r| r.id.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 fn cancel_optimization(state: tauri::State<'_, CleanTask>) {
     if let Some(flag) = state.0.lock().unwrap().as_ref() {
@@ -200,14 +241,31 @@ fn cancel_optimization(state: tauri::State<'_, CleanTask>) {
 #[tauri::command]
 fn start_optimization(
     app: tauri::AppHandle,
-    state: tauri::State<'_, CleanTask>,
     methods: Vec<system::clean::Method>,
     excluded: Vec<u32>,
     source: Option<system::history::Source>,
 ) -> Result<(), String> {
+    start_optimization_inner(
+        app,
+        methods,
+        excluded,
+        source.unwrap_or(system::history::Source::Manual),
+    )
+}
+
+/// The run itself, callable from both the command and the automation
+/// evaluator. Both go through the same single-flight guard, so an automatic
+/// run can never collide with one the user started.
+fn start_optimization_inner(
+    app: tauri::AppHandle,
+    methods: Vec<system::clean::Method>,
+    excluded: Vec<u32>,
+    source: system::history::Source,
+) -> Result<(), String> {
     // Persisted name-based exclusions always apply, on top of any pids the
     // caller passed for this run only.
     let excluded_names = app.state::<system::settings::Store>().get().excluded_processes;
+    let state = app.state::<CleanTask>();
     let mut slot = state.0.lock().unwrap();
     if slot.as_ref().is_some_and(|f| !f.load(Ordering::Relaxed)) {
         return Err("An optimization is already running".into());
@@ -230,11 +288,8 @@ fn start_optimization(
 
                 // Recorded before the delayed measurement so a run survives in
                 // history even if Memora exits during the 30 second wait.
-                let record = system::history::Record::from_report(
-                    source.unwrap_or(system::history::Source::Manual),
-                    &methods,
-                    &report,
-                );
+                let record =
+                    system::history::Record::from_report(source.clone(), &methods, &report);
                 let at = record.at;
                 if let Err(e) = app.state::<system::history::Store>().append(&record) {
                     eprintln!("[memora] history append failed: {e}");
@@ -250,6 +305,16 @@ fn start_optimization(
                         let settled = later.physical_available as i64 - available_before as i64;
                         let _ = app.emit("clean://settled", settled);
                         let _ = app.state::<system::history::Store>().set_settled(at, settled);
+
+                        // The effectiveness gate needs the settled figure: a
+                        // rule that keeps recovering nothing suspends itself.
+                        if let system::history::Source::Automation { rule } = &source {
+                            app.state::<AutomationEngine>()
+                                .0
+                                .lock()
+                                .unwrap()
+                                .record_settled(rule, settled);
+                        }
                     }
                 });
             }
@@ -260,7 +325,7 @@ fn start_optimization(
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
                         .unwrap_or(0),
-                    source: source.unwrap_or(system::history::Source::Manual),
+                    source: source.clone(),
                     outcome: system::history::RunOutcome::Failed { error: e.clone() },
                     methods: methods.clone(),
                     ..Default::default()
@@ -280,16 +345,92 @@ fn start_optimization(
 /// Rasterizing happens here rather than on the UI thread; `tray::update` bails
 /// out early when the rounded percentage has not moved.
 fn spawn_sampler(app: tauri::AppHandle) {
+    let started = std::time::Instant::now();
+
     std::thread::spawn(move || loop {
         if let Ok(snap) = system::memory::snapshot() {
             let _ = app.emit("memory://sample", snap);
             let settings = app.state::<system::settings::Store>().get();
             tray::update(&app, &snap, &settings);
+
+            // Automation is the least important thing on this thread: a panic
+            // here must not take the tray meter and graph down with it.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                evaluate_automation(&app, &settings, &snap, started.elapsed().as_millis() as u64)
+            }));
+            if result.is_err() {
+                eprintln!("[memora] automation evaluator panicked; disabled for this session");
+                break;
+            }
         }
         // Fixed 1 Hz: the graph needs a steady series regardless of how often
         // the tray chooses to redraw.
         std::thread::sleep(Duration::from_secs(1));
     });
+}
+
+/// Evaluates automation for one tick and performs the decision.
+///
+/// `now_ms` is monotonic time since launch, not wall clock: a clock change or
+/// DST shift must never fire a rule.
+fn evaluate_automation(
+    app: &tauri::AppHandle,
+    settings: &system::settings::Settings,
+    snap: &MemorySnapshot,
+    now_ms: u64,
+) {
+    use system::automation::{Context, Decision};
+
+    let ctx = Context {
+        now_ms,
+        percent_in_use: snap.percent_in_use,
+        idle_secs: system::automation::idle_secs(),
+        foreground_busy: system::automation::foreground_busy(),
+        elevated: system::clean::is_elevated(),
+        run_in_flight: app.state::<CleanTask>().in_flight(),
+    };
+
+    let decision = app
+        .state::<AutomationEngine>()
+        .0
+        .lock()
+        .unwrap()
+        .evaluate(&settings.automation, ctx);
+
+    match decision {
+        Decision::Idle => {}
+
+        Decision::Blocked { rule, gate } => {
+            // Only recorded when automation is actually on. Logging every tick
+            // while disabled would bury the informative entries.
+            if settings.automation.enabled && gate != system::automation::Gate::Disabled {
+                let record = system::history::Record {
+                    at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0),
+                    source: system::history::Source::Automation { rule },
+                    outcome: system::history::RunOutcome::Blocked {
+                        gate: gate.describe().to_string(),
+                    },
+                    ..Default::default()
+                };
+                let _ = app.state::<system::history::Store>().append(&record);
+            }
+        }
+
+        Decision::Run { rule, methods } => {
+            let _ = app.emit("automation://run", &rule);
+            if let Err(e) = start_optimization_inner(
+                app.clone(),
+                methods,
+                Vec::new(),
+                system::history::Source::Automation { rule },
+            ) {
+                eprintln!("[memora] automation could not start a run: {e}");
+            }
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -323,6 +464,8 @@ pub fn run() {
             update_settings,
             list_history,
             clear_history,
+            resume_rule,
+            suspended_rules,
             start_optimization,
             cancel_optimization
         ])
@@ -337,6 +480,7 @@ pub fn run() {
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
             app.manage(system::settings::Store::load(config_dir.join("settings.json")));
             app.manage(system::history::Store::new(config_dir.join("history.jsonl")));
+            app.manage(AutomationEngine::default());
 
             // Mica is the main-surface backdrop per the design rules. It needs
             // Windows 11 build 22000+; older builds fall back to a solid theme

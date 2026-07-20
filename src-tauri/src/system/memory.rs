@@ -28,6 +28,29 @@ pub struct MemorySnapshot {
     pub timestamp_ms: u64,
 }
 
+/// The deeper breakdown shown on the Memory page.
+///
+/// Every field is optional because each comes from a source that can refuse:
+/// the memory-list query is undocumented and can fail, and compressed memory is
+/// derived from a process that may not exist. `None` means "not measured" and
+/// the UI shows a dash — it never becomes a zero.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDetail {
+    /// Cached pages the OS can reclaim without writing anything to disk.
+    pub standby: Option<u64>,
+    /// Dirty pages that must be written to disk before reuse.
+    pub modified: Option<u64>,
+    /// Genuinely unused pages, including zeroed ones.
+    pub free: Option<u64>,
+    /// Physical memory held by the compression store.
+    pub compressed: Option<u64>,
+    /// Installed RAM the firmware withheld from Windows.
+    pub hardware_reserved: Option<u64>,
+    /// Installed RAM according to SMBIOS, which includes the reserved part.
+    pub physical_installed: Option<u64>,
+}
+
 fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -90,6 +113,111 @@ pub fn snapshot() -> Result<MemorySnapshot, String> {
     Err("Memory telemetry is only available on Windows".into())
 }
 
+#[cfg(windows)]
+mod detail_imp {
+    /// `SYSTEM_MEMORY_LIST_INFORMATION`, which is undocumented and therefore not
+    /// bound by the `windows` crate. Field order matches ntexapi.h.
+    #[repr(C)]
+    #[derive(Default)]
+    pub struct SystemMemoryListInformation {
+        pub zero_page_count: usize,
+        pub free_page_count: usize,
+        pub modified_page_count: usize,
+        pub modified_no_write_page_count: usize,
+        pub bad_page_count: usize,
+        /// Standby pages, split across the eight cache priorities.
+        pub page_count_by_priority: [usize; 8],
+        pub repurposed_pages_by_priority: [usize; 8],
+        pub modified_page_count_page_file: usize,
+    }
+
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtQuerySystemInformation(
+            class: i32,
+            info: *mut std::ffi::c_void,
+            len: u32,
+            return_len: *mut u32,
+        ) -> i32;
+    }
+
+    const SYSTEM_MEMORY_LIST_INFORMATION_CLASS: i32 = 80;
+
+    pub fn memory_list() -> Option<SystemMemoryListInformation> {
+        let mut info = SystemMemoryListInformation::default();
+        let mut returned = 0u32;
+
+        // SAFETY: the struct is repr(C) and matches the layout the class writes;
+        // its size is passed so the kernel cannot overrun it.
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SYSTEM_MEMORY_LIST_INFORMATION_CLASS,
+                &mut info as *mut _ as *mut std::ffi::c_void,
+                std::mem::size_of::<SystemMemoryListInformation>() as u32,
+                &mut returned,
+            )
+        };
+
+        // Negative NTSTATUS is a failure; the caller reports "not measured".
+        (status >= 0).then_some(info)
+    }
+
+    pub fn physically_installed() -> Option<u64> {
+        use windows::Win32::System::SystemInformation::GetPhysicallyInstalledSystemMemory;
+
+        let mut kb = 0u64;
+        // SAFETY: kb is an owned local valid for the call.
+        unsafe { GetPhysicallyInstalledSystemMemory(&mut kb) }
+            .ok()
+            .map(|_| kb * 1024)
+    }
+
+    /// Compressed memory is held by the Memory Compression process; its working
+    /// set is how Task Manager derives the figure.
+    pub fn compressed() -> Option<u64> {
+        use super::super::process;
+
+        process::enumerate()
+            .ok()?
+            .into_iter()
+            .find(|p| p.name.eq_ignore_ascii_case("MemCompression"))
+            .and_then(|p| {
+                process::open_for_query(p.pid).and_then(|h| process::working_set_of(h.0))
+            })
+    }
+}
+
+#[cfg(windows)]
+pub fn detail() -> Result<MemoryDetail, String> {
+    let snap = snapshot()?;
+    let page = snap.page_size;
+    let bytes = |pages: usize| (pages as u64).saturating_mul(page);
+
+    let list = detail_imp::memory_list();
+    let installed = detail_imp::physically_installed();
+
+    Ok(MemoryDetail {
+        standby: list
+            .as_ref()
+            .map(|l| bytes(l.page_count_by_priority.iter().sum::<usize>())),
+        modified: list.as_ref().map(|l| bytes(l.modified_page_count)),
+        // Free and zeroed pages are both unused; Task Manager reports them
+        // together.
+        free: list
+            .as_ref()
+            .map(|l| bytes(l.free_page_count + l.zero_page_count)),
+        compressed: detail_imp::compressed(),
+        // Only meaningful if SMBIOS reported more than Windows can address.
+        hardware_reserved: installed.map(|i| i.saturating_sub(snap.physical_total)),
+        physical_installed: installed,
+    })
+}
+
+#[cfg(not(windows))]
+pub fn detail() -> Result<MemoryDetail, String> {
+    Err("Memory telemetry is only available on Windows".into())
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
@@ -111,6 +239,45 @@ mod tests {
             s.commit_total,
             s.commit_limit,
             s.system_cache
+        );
+    }
+
+    /// The breakdown must add up: standby, modified and free are disjoint
+    /// subsets of physical memory, so together they cannot exceed the total.
+    #[test]
+    fn detail_is_consistent_with_the_snapshot() {
+        let snap = snapshot().expect("snapshot");
+        let d = detail().expect("detail");
+
+        let standby = d.standby.expect("standby should be readable");
+        let modified = d.modified.expect("modified should be readable");
+        let free = d.free.expect("free should be readable");
+
+        assert!(
+            standby + modified + free <= snap.physical_total,
+            "standby {standby} + modified {modified} + free {free} exceeds total {}",
+            snap.physical_total
+        );
+
+        // Available memory is essentially standby plus free; it should not be
+        // wildly out of step with them.
+        assert!(
+            standby + free <= snap.physical_available + 512 * 1024 * 1024,
+            "standby + free ({}) far exceeds available ({})",
+            standby + free,
+            snap.physical_available
+        );
+
+        if let Some(installed) = d.physical_installed {
+            assert!(installed >= snap.physical_total, "installed must cover usable");
+            let reserved = d.hardware_reserved.unwrap();
+            assert_eq!(reserved, installed - snap.physical_total);
+            assert!(reserved < 2 * 1024 * 1024 * 1024, "reserved looks implausible");
+        }
+
+        println!(
+            "standby={} modified={} free={} compressed={:?} installed={:?} reserved={:?}",
+            standby, modified, free, d.compressed, d.physical_installed, d.hardware_reserved
         );
     }
 }

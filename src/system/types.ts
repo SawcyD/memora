@@ -13,6 +13,17 @@ export interface MemorySnapshot {
   timestampMs: number;
 }
 
+/** Mirrors `MemoryDetail` in src-tauri/src/system/memory.rs.
+ *  Null means the counter was not measured, never zero. */
+export interface MemoryDetail {
+  standby: number | null;
+  modified: number | null;
+  free: number | null;
+  compressed: number | null;
+  hardwareReserved: number | null;
+  physicalInstalled: number | null;
+}
+
 /** Mirrors `Accent` in src-tauri/src/system/accent.rs. */
 export interface Accent {
   accent: string;

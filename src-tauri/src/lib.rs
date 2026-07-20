@@ -13,6 +13,13 @@ fn memory_snapshot() -> Result<MemorySnapshot, String> {
     system::memory::snapshot()
 }
 
+/// The deeper breakdown for the Memory page. Separate from the 1 Hz sample
+/// because it enumerates processes to find the compression store.
+#[tauri::command]
+fn memory_detail() -> Result<system::memory::MemoryDetail, String> {
+    system::memory::detail()
+}
+
 #[tauri::command]
 fn system_accent() -> Accent {
     system::accent::accent()
@@ -168,6 +175,7 @@ pub fn run() {
         .manage(ProcessSampler::default())
         .invoke_handler(tauri::generate_handler![
             memory_snapshot,
+            memory_detail,
             system_accent,
             list_processes,
             trim_process,

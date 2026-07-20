@@ -4,6 +4,7 @@ import { NavigationView, FOOTER_ITEMS, NAV_ITEMS } from "@/components/Navigation
 import { TitleBar } from "@/components/TitleBar";
 import { CleanerPage } from "@/pages/Cleaner";
 import { HomePage } from "@/pages/Home";
+import { MemoryPage } from "@/pages/Memory";
 import { PlaceholderPage } from "@/pages/Placeholder";
 import { ProcessesPage } from "@/pages/Processes";
 import { SettingsPage } from "@/pages/Settings";
@@ -17,7 +18,6 @@ import { useSystemTheme } from "@/system/useTheme";
 const COMPACT_BREAKPOINT = 860;
 
 const SUMMARIES: Partial<Record<PageId, string>> = {
-  memory: "The detailed memory breakdown and multi-range graph are not built yet.",
   automation: "Profiles and automatic cleaning rules are not built yet.",
   history: "Optimization history is not recorded yet.",
   about: "Memora 0.1.0",
@@ -90,6 +90,8 @@ export default function App() {
         >
           {page === "home" ? (
             <HomePage memory={memory} onOptimize={() => setPage("cleaner")} />
+          ) : page === "memory" ? (
+            <MemoryPage memory={memory} />
           ) : page === "cleaner" ? (
             <CleanerPage clean={clean} excluded={excluded} />
           ) : page === "processes" ? (

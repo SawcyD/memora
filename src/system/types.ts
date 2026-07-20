@@ -49,7 +49,11 @@ export interface ProcessInfo {
 }
 
 /** Mirrors `Method` in src-tauri/src/system/clean.rs. */
-export type CleanMethod = "trimWorkingSets" | "purgeStandbyList" | "flushModifiedList";
+export type CleanMethod =
+  | "trimWorkingSets"
+  | "purgeLowPriorityStandbyList"
+  | "purgeStandbyList"
+  | "flushModifiedList";
 
 export type Outcome = "trimmed" | "skipped" | "failed";
 

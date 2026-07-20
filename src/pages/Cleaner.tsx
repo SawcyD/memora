@@ -34,6 +34,15 @@ const METHODS: MethodSpec[] = [
     needsElevation: false,
   },
   {
+    id: "purgeLowPriorityStandbyList",
+    name: "Clear low-priority cached memory",
+    description:
+      "Discards only the cached data Windows itself ranked as least worth keeping. Reclaims memory without throwing away the cache that is making your PC fast.",
+    risk: "Low",
+    defaultOn: false,
+    needsElevation: true,
+  },
+  {
     id: "purgeStandbyList",
     name: "Clear standby memory",
     description:

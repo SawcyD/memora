@@ -1,5 +1,5 @@
 import { MemoryGraph } from "@/components/MemoryGraph";
-import { Button, InfoRow, SectionHeader } from "@/components/primitives";
+import { Button, InfoBar, InfoRow, SectionHeader } from "@/components/primitives";
 import { formatBytes, formatBytesPair, formatPercent } from "@/system/format";
 import type { MemoryState } from "@/system/useMemory";
 
@@ -43,6 +43,19 @@ export function HomePage({
           Optimize memory
         </Button>
       </div>
+
+      {/* Commit charge nearing the limit causes allocation failures that
+          surface as unexplained application crashes. The data is already
+          sampled every second; saying so costs nothing. */}
+      {current && current.commitLimit > 0 &&
+        current.commitTotal / current.commitLimit >= 0.9 && (
+          <div className="mb-4">
+            <InfoBar
+              title="Committed memory is close to the system limit"
+              message={`${formatBytesPair(current.commitTotal, current.commitLimit)} committed. When this limit is reached, applications fail to allocate memory and may close unexpectedly. Increasing the paging file size, or closing some applications, avoids it. Trimming working sets does not help: it moves pages within RAM and does not reduce commit charge.`}
+            />
+          </div>
+        )}
 
       <MemoryGraph history={history} seconds={60} className="mb-5" />
 

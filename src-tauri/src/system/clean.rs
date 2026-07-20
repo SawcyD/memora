@@ -23,7 +23,11 @@ use super::process::{self, ProcessInfo};
 pub enum Method {
     /// Empty the working set of every process Memora can open.
     TrimWorkingSets,
-    /// Discard the standby (cached) page list. Requires elevation.
+    /// Discard only the low-priority standby list — cache Windows itself
+    /// ranked as least worth keeping. Reclaims memory without throwing away
+    /// the cache that is actually making the machine fast. Requires elevation.
+    PurgeLowPriorityStandbyList,
+    /// Discard the entire standby (cached) page list. Requires elevation.
     PurgeStandbyList,
     /// Flush modified pages to disk so they can be reused. Requires elevation.
     FlushModifiedList,
@@ -295,6 +299,7 @@ mod imp {
     /// `SystemMemoryListInformation`.
     const MEMORY_FLUSH_MODIFIED_LIST: i32 = 3;
     const MEMORY_PURGE_STANDBY_LIST: i32 = 4;
+    const MEMORY_PURGE_LOW_PRIORITY_STANDBY_LIST: i32 = 5;
     /// `SystemMemoryListInformation`
     const SYSTEM_MEMORY_LIST_INFORMATION: i32 = 80;
 
@@ -337,6 +342,10 @@ mod imp {
 
     pub fn purge_standby() -> Result<(), String> {
         memory_list_command(MEMORY_PURGE_STANDBY_LIST)
+    }
+
+    pub fn purge_low_priority_standby() -> Result<(), String> {
+        memory_list_command(MEMORY_PURGE_LOW_PRIORITY_STANDBY_LIST)
     }
 
     pub fn flush_modified() -> Result<(), String> {
@@ -400,6 +409,11 @@ pub fn run(
     // Privileged methods run after the trim so the standby list they purge
     // already contains everything the trim pushed out.
     for (method, label, action) in [
+        (
+            Method::PurgeLowPriorityStandbyList,
+            "Clear low-priority cached memory",
+            imp::purge_low_priority_standby as fn() -> Result<(), String>,
+        ),
         (
             Method::PurgeStandbyList,
             "Clear standby memory",

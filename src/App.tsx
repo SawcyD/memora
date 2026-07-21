@@ -1,38 +1,64 @@
 import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { NavigationView, FOOTER_ITEMS, NAV_ITEMS } from "@/components/NavigationView";
 import { TitleBar } from "@/components/TitleBar";
+import { CleanerPage } from "@/pages/Cleaner";
+import { AboutPage } from "@/pages/About";
+import { AutomationPage } from "@/pages/Automation";
+import { HistoryPage } from "@/pages/History";
 import { HomePage } from "@/pages/Home";
+import { MemoryPage } from "@/pages/Memory";
 import { PlaceholderPage } from "@/pages/Placeholder";
+import { ProcessesPage } from "@/pages/Processes";
+import { SettingsPage } from "@/pages/Settings";
 import type { PageId } from "@/system/types";
+import { useClean } from "@/system/useClean";
 import { useMemory } from "@/system/useMemory";
+import { useSettings } from "@/system/useSettings";
 import { useSystemTheme } from "@/system/useTheme";
 
 /** Width below which the navigation pane auto-collapses to an icon rail. */
 const COMPACT_BREAKPOINT = 860;
 
-const SUMMARIES: Partial<Record<PageId, string>> = {
-  memory: "The detailed memory breakdown and multi-range graph are not built yet.",
-  processes: "The process grid is not built yet.",
-  cleaner: "Cleaning methods and the optimization run are not built yet.",
-  automation: "Profiles and automatic cleaning rules are not built yet.",
-  history: "Optimization history is not recorded yet.",
-  settings: "Settings, including tray behavior, are not built yet.",
-  about: "Memora 0.1.0",
-};
+const SUMMARIES: Partial<Record<PageId, string>> = {};
 
 export default function App() {
   useSystemTheme();
   const memory = useMemory();
+  // Lives at the app level so a run keeps going while the user browses pages.
+  const clean = useClean();
+  const settings = useSettings();
 
   const [page, setPage] = useState<PageId>("home");
   const [userCollapsed, setUserCollapsed] = useState(false);
   const [compact, setCompact] = useState(() => window.innerWidth < COMPACT_BREAKPOINT);
+  // Exclusions live in settings as process names, so they survive restarts and
+  // keep protecting the same program when its pid changes.
+  const excludedNames = settings.settings?.excludedProcesses ?? [];
+  const minimizeTrimNames = settings.settings?.minimizeTrim.applications ?? [];
 
   useEffect(() => {
     const onResize = () => setCompact(window.innerWidth < COMPACT_BREAKPOINT);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  // Tray click actions: navigate, or start an optimization from the tray.
+  useEffect(() => {
+    const subs = [
+      listen<PageId>("tray://navigate", (e) => setPage(e.payload)),
+      listen<string>("automation://run", () => setPage("cleaner")),
+      listen("tray://optimize", () => {
+        // Show what is happening rather than running invisibly.
+        setPage("cleaner");
+        clean.start(["trimWorkingSets"], { kind: "tray" });
+      }),
+    ].map((p) => p.catch(() => () => {}));
+
+    return () => {
+      subs.forEach((p) => p.then((f) => f()));
+    };
+  }, [clean.start]);
 
   // A narrow window forces the rail; above the breakpoint the user's choice wins.
   const collapsed = compact || userCollapsed;
@@ -65,7 +91,51 @@ export default function App() {
           ].join(" ")}
         >
           {page === "home" ? (
-            <HomePage memory={memory} />
+            <HomePage
+              memory={memory}
+              onOptimize={() => {
+                // The Home command is an action, not a link to another button.
+                setPage("cleaner");
+                clean.start(["trimWorkingSets"]);
+              }}
+            />
+          ) : page === "memory" ? (
+            <MemoryPage memory={memory} />
+          ) : page === "cleaner" ? (
+            <CleanerPage clean={clean} excludedNames={excludedNames} />
+          ) : page === "processes" ? (
+            <ProcessesPage
+              excludedNames={excludedNames}
+              minimizeTrimNames={minimizeTrimNames}
+              onToggleExcluded={(name) => {
+                const key = name.toLowerCase();
+                settings.update({
+                  excludedProcesses: excludedNames.includes(key)
+                    ? excludedNames.filter((n) => n !== key)
+                    : [...excludedNames, key],
+                });
+              }}
+              onToggleMinimizeTrim={(name) => {
+                if (!settings.settings) return;
+                const key = name.toLowerCase();
+                settings.update({
+                  minimizeTrim: {
+                    ...settings.settings.minimizeTrim,
+                    applications: minimizeTrimNames.includes(key)
+                      ? minimizeTrimNames.filter((n) => n !== key)
+                      : [...minimizeTrimNames, key],
+                  },
+                });
+              }}
+            />
+          ) : page === "automation" ? (
+            <AutomationPage state={settings} />
+          ) : page === "history" ? (
+            <HistoryPage />
+          ) : page === "about" ? (
+            <AboutPage elevated={clean.elevated} />
+          ) : page === "settings" ? (
+            <SettingsPage state={settings} />
           ) : (
             <PlaceholderPage title={title} summary={SUMMARIES[page] ?? ""} />
           )}

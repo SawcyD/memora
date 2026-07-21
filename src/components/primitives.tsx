@@ -23,10 +23,26 @@ export function Button({
 }
 
 /** A label/value pair in the compact two-column layout Task Manager uses. */
-export function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+export function InfoRow({
+  label,
+  value,
+  help,
+}: {
+  label: string;
+  value: React.ReactNode;
+  help?: string;
+}) {
   return (
     <div className="flex items-baseline justify-between gap-4 py-[3px]">
-      <span className="text-[13px] text-[var(--text-secondary)]">{label}</span>
+      <span
+        className={[
+          "text-[13px] text-[var(--text-secondary)]",
+          help ? "cursor-help decoration-dotted underline-offset-2 hover:underline" : "",
+        ].join(" ")}
+        title={help}
+      >
+        {label}
+      </span>
       <span className="tabular text-[13px] text-[var(--text-primary)]">{value}</span>
     </div>
   );
@@ -35,6 +51,173 @@ export function InfoRow({ label, value }: { label: string; value: React.ReactNod
 export function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
     <h2 className="mb-2 text-[14px] font-semibold text-[var(--text-primary)]">{children}</h2>
+  );
+}
+
+/** WinUI ToggleSwitch: 40x20 track with a sliding knob. */
+export function ToggleSwitch({
+  checked,
+  onChange,
+  disabled = false,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={[
+        "relative h-5 w-10 shrink-0 rounded-full border transition-colors duration-150",
+        "disabled:opacity-40",
+        checked
+          ? "border-transparent bg-[var(--accent-usable)]"
+          : "border-[var(--stroke-control-strong)] bg-[var(--control-fill-tertiary)]",
+      ].join(" ")}
+    >
+      <span
+        aria-hidden="true"
+        className={[
+          "absolute top-1/2 block size-3 -translate-y-1/2 rounded-full transition-[left] duration-150",
+          checked ? "left-[22px] bg-[var(--text-on-accent)]" : "left-[4px] bg-[var(--text-secondary)]",
+        ].join(" ")}
+      />
+    </button>
+  );
+}
+
+/** WinUI ComboBox. A native select restyled to Windows metrics. */
+export function ComboBox<T extends string | number>({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+  label: string;
+}) {
+  return (
+    <select
+      aria-label={label}
+      value={String(value)}
+      onChange={(e) => {
+        const picked = options.find((o) => String(o.value) === e.target.value);
+        if (picked) onChange(picked.value);
+      }}
+      className={[
+        "h-8 min-w-[150px] shrink-0 rounded-[var(--radius-md)] border px-2 text-[13px]",
+        "border-[var(--stroke-control)] bg-[var(--control-fill)] text-[var(--text-primary)]",
+      ].join(" ")}
+    >
+      {options.map((o) => (
+        <option key={String(o.value)} value={String(o.value)}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** WinUI NumberBox, constrained to a range. */
+export function NumberBox({
+  value,
+  min,
+  max,
+  onChange,
+  label,
+  suffix,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+  label: string;
+  suffix?: string;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1.5">
+      <input
+        type="number"
+        aria-label={label}
+        value={value}
+        min={min}
+        max={max}
+        onChange={(e) => {
+          const n = Number(e.target.value);
+          // Out-of-range input is clamped, not silently rejected.
+          if (Number.isFinite(n)) onChange(Math.min(max, Math.max(min, Math.round(n))));
+        }}
+        className={[
+          "tabular h-8 w-[72px] rounded-[var(--radius-md)] border px-2 text-right text-[13px]",
+          "border-[var(--stroke-control)] bg-[var(--control-fill)] text-[var(--text-primary)]",
+        ].join(" ")}
+      />
+      {suffix && <span className="text-[12px] text-[var(--text-secondary)]">{suffix}</span>}
+    </div>
+  );
+}
+
+/**
+ * A row in a Windows settings list: icon-free, one line of title, one of
+ * description, and a control on the trailing edge.
+ */
+export function SettingsRow({
+  title,
+  description,
+  note,
+  control,
+}: {
+  title: string;
+  description?: string;
+  note?: React.ReactNode;
+  control: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-4 border-b border-[var(--stroke-divider)] px-4 py-3 last:border-b-0">
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] text-[var(--text-primary)]">{title}</div>
+        {description && (
+          <p className="mt-0.5 text-[12px] leading-4 text-[var(--text-secondary)]">{description}</p>
+        )}
+        {note && <div className="mt-1 text-[12px] text-[var(--text-tertiary)]">{note}</div>}
+      </div>
+      {control}
+    </div>
+  );
+}
+
+export function SettingsSection({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--stroke-control)] bg-[var(--card-fill)]">
+      {children}
+    </div>
+  );
+}
+
+export function ProgressBar({ value, max }: { value: number; max: number }) {
+  const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+  return (
+    <div
+      role="progressbar"
+      aria-valuenow={value}
+      aria-valuemin={0}
+      aria-valuemax={max}
+      className="h-1 w-full overflow-hidden rounded-full bg-[var(--control-fill-tertiary)]"
+    >
+      <div
+        className="h-full rounded-full bg-[var(--accent-usable)] transition-[width] duration-150"
+        style={{ width: `${pct}%` }}
+      />
+    </div>
   );
 }
 

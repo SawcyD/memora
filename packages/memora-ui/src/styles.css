@@ -1,0 +1,340 @@
+:root,
+.memora-ui-root {
+  --memora-font: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --memora-font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --memora-accent: #0078d4;
+  --memora-accent-usable: var(--memora-accent);
+  --memora-layer: rgb(255 255 255 / 0.5);
+  --memora-card: rgb(255 255 255 / 0.7);
+  --memora-card-secondary: rgb(246 246 246 / 0.5);
+  --memora-acrylic: rgb(252 252 252 / 0.88);
+  --memora-smoke: rgb(0 0 0 / 0.3);
+  --memora-control: rgb(255 255 255 / 0.72);
+  --memora-control-hover: rgb(249 249 249 / 0.82);
+  --memora-control-pressed: rgb(249 249 249 / 0.45);
+  --memora-subtle-hover: rgb(0 0 0 / 0.037);
+  --memora-subtle-pressed: rgb(0 0 0 / 0.06);
+  --memora-text: #1a1a1a;
+  --memora-text-secondary: rgb(0 0 0 / 0.61);
+  --memora-text-tertiary: rgb(0 0 0 / 0.45);
+  --memora-text-disabled: rgb(0 0 0 / 0.36);
+  --memora-text-on-accent: #fff;
+  --memora-stroke: rgb(0 0 0 / 0.08);
+  --memora-stroke-strong: rgb(0 0 0 / 0.45);
+  --memora-stroke-surface: rgb(117 117 117 / 0.4);
+  --memora-focus: #1a1a1a;
+  --memora-danger: #c42b1c;
+  --memora-success: #0f7b0f;
+  --memora-warning: #9d5d00;
+  --memora-radius-sm: 3px;
+  --memora-radius-md: 4px;
+  --memora-radius-lg: 7px;
+  --memora-shadow-flyout: 0 1px 2px rgb(0 0 0 / 0.08), 0 8px 16px rgb(0 0 0 / 0.14);
+  --memora-shadow-dialog: 0 2px 4px rgb(0 0 0 / 0.08), 0 16px 36px rgb(0 0 0 / 0.16), 0 32px 64px rgb(0 0 0 / 0.12);
+  --memora-control-height: 32px;
+  color-scheme: light;
+}
+
+.memora-ui-root {
+  box-sizing: border-box;
+  color: var(--memora-text);
+  font-family: var(--memora-font);
+  font-size: 14px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.memora-ui-root *,
+.memora-ui-root *::before,
+.memora-ui-root *::after {
+  box-sizing: border-box;
+}
+
+.memora-ui-root[data-memora-density="comfortable"] {
+  --memora-control-height: 40px;
+}
+
+.memora-ui-root[data-memora-theme="dark"] {
+  color-scheme: dark;
+  --memora-accent-usable: color-mix(in srgb, var(--memora-accent) 68%, white);
+  --memora-layer: rgb(58 58 58 / 0.3);
+  --memora-card: rgb(255 255 255 / 0.05);
+  --memora-card-secondary: rgb(255 255 255 / 0.03);
+  --memora-acrylic: rgb(44 44 44 / 0.9);
+  --memora-control: rgb(255 255 255 / 0.06);
+  --memora-control-hover: rgb(255 255 255 / 0.09);
+  --memora-control-pressed: rgb(255 255 255 / 0.035);
+  --memora-subtle-hover: rgb(255 255 255 / 0.06);
+  --memora-subtle-pressed: rgb(255 255 255 / 0.04);
+  --memora-text: #fff;
+  --memora-text-secondary: rgb(255 255 255 / 0.79);
+  --memora-text-tertiary: rgb(255 255 255 / 0.55);
+  --memora-text-disabled: rgb(255 255 255 / 0.36);
+  --memora-text-on-accent: #000;
+  --memora-stroke: rgb(255 255 255 / 0.083);
+  --memora-stroke-strong: rgb(255 255 255 / 0.54);
+  --memora-focus: #fff;
+  --memora-danger: #ff99a4;
+  --memora-success: #6ccb5f;
+  --memora-warning: #fce100;
+  --memora-shadow-flyout: 0 1px 2px rgb(0 0 0 / 0.18), 0 8px 16px rgb(0 0 0 / 0.28);
+  --memora-shadow-dialog: 0 2px 4px rgb(0 0 0 / 0.2), 0 16px 36px rgb(0 0 0 / 0.3), 0 32px 64px rgb(0 0 0 / 0.24);
+}
+
+@media (prefers-color-scheme: dark) {
+  .memora-ui-root[data-memora-theme="system"] {
+    color-scheme: dark;
+    --memora-accent-usable: color-mix(in srgb, var(--memora-accent) 68%, white);
+    --memora-layer: rgb(58 58 58 / 0.3);
+    --memora-card: rgb(255 255 255 / 0.05);
+    --memora-card-secondary: rgb(255 255 255 / 0.03);
+    --memora-acrylic: rgb(44 44 44 / 0.9);
+    --memora-control: rgb(255 255 255 / 0.06);
+    --memora-control-hover: rgb(255 255 255 / 0.09);
+    --memora-control-pressed: rgb(255 255 255 / 0.035);
+    --memora-subtle-hover: rgb(255 255 255 / 0.06);
+    --memora-subtle-pressed: rgb(255 255 255 / 0.04);
+    --memora-text: #fff;
+    --memora-text-secondary: rgb(255 255 255 / 0.79);
+    --memora-text-tertiary: rgb(255 255 255 / 0.55);
+    --memora-text-disabled: rgb(255 255 255 / 0.36);
+    --memora-text-on-accent: #000;
+    --memora-stroke: rgb(255 255 255 / 0.083);
+    --memora-stroke-strong: rgb(255 255 255 / 0.54);
+    --memora-focus: #fff;
+    --memora-danger: #ff99a4;
+    --memora-success: #6ccb5f;
+    --memora-warning: #fce100;
+  }
+}
+
+.memora-ui-root :focus-visible,
+.memora-dialog :focus-visible,
+.memora-context-menu :focus-visible {
+  outline: 2px solid var(--memora-focus);
+  outline-offset: 1px;
+  border-radius: var(--memora-radius-md);
+}
+
+.memora-button,
+.memora-icon-button,
+.memora-toggle,
+.memora-menu-item,
+.memora-nav-item,
+.memora-grid-sort {
+  font: inherit;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 80ms ease-out, border-color 80ms ease-out, color 80ms ease-out, opacity 80ms ease-out, transform 100ms ease-out;
+}
+
+.memora-button:active:not(:disabled):not(.memora-static),
+.memora-icon-button:active:not(:disabled):not(.memora-static),
+.memora-toggle:active:not(:disabled),
+.memora-nav-item:active:not(:disabled),
+.memora-menu-item:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.memora-button,
+.memora-icon-button {
+  min-height: var(--memora-control-height);
+  border: 1px solid var(--memora-stroke);
+  border-radius: var(--memora-radius-md);
+  color: var(--memora-text);
+  cursor: default;
+}
+
+.memora-button {
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.memora-icon-button {
+  display: inline-grid;
+  width: var(--memora-control-height);
+  padding: 0;
+  place-items: center;
+}
+
+.memora-button--standard { background: var(--memora-control); }
+.memora-button--standard:hover:not(:disabled) { background: var(--memora-control-hover); }
+.memora-button--standard:active:not(:disabled) { background: var(--memora-control-pressed); }
+.memora-button--primary { border-color: transparent; background: var(--memora-accent-usable); color: var(--memora-text-on-accent); }
+.memora-button--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--memora-accent-usable) 90%, black); }
+.memora-button--primary:active:not(:disabled) { background: color-mix(in srgb, var(--memora-accent-usable) 80%, black); }
+.memora-button--subtle { border-color: transparent; background: transparent; }
+.memora-button--subtle:hover:not(:disabled) { background: var(--memora-subtle-hover); }
+.memora-button--subtle:active:not(:disabled) { background: var(--memora-subtle-pressed); }
+.memora-button--danger { border-color: transparent; background: var(--memora-danger); color: white; }
+.memora-button--danger:hover:not(:disabled) { background: color-mix(in srgb, var(--memora-danger) 88%, black); }
+.memora-button:disabled,
+.memora-icon-button:disabled,
+.memora-toggle:disabled,
+.memora-nav-item:disabled,
+.memora-menu-item:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.memora-section-header {
+  margin: 0 0 8px;
+  color: var(--memora-text);
+  font-family: var(--memora-font-display);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  text-wrap: balance;
+}
+
+.memora-info-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; min-height: 26px; padding: 3px 0; }
+.memora-info-row__label { color: var(--memora-text-secondary); font-size: 13px; }
+.memora-info-row__value { color: var(--memora-text); font-size: 13px; text-align: right; }
+.memora-help-text { cursor: help; text-decoration: underline dotted transparent; text-underline-offset: 2px; }
+.memora-help-text:hover { text-decoration-color: currentColor; }
+.memora-tabular,
+.memora-data-grid td { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+.memora-toggle { display: inline-grid; width: 40px; min-width: 40px; height: 40px; padding: 0; border: 0; background: transparent; place-items: center; cursor: default; }
+.memora-toggle__track { position: relative; width: 40px; height: 20px; border: 1px solid var(--memora-stroke-strong); border-radius: 10px; background: var(--memora-control-pressed); transition: background-color 150ms ease-out, border-color 150ms ease-out; }
+.memora-toggle__thumb { position: absolute; top: 50%; left: 4px; width: 12px; height: 12px; border-radius: 50%; background: var(--memora-text-secondary); transform: translateY(-50%); transition: left 150ms ease-out, background-color 150ms ease-out; }
+.memora-toggle--checked .memora-toggle__track { border-color: transparent; background: var(--memora-accent-usable); }
+.memora-toggle--checked .memora-toggle__thumb { left: 22px; background: var(--memora-text-on-accent); }
+
+.memora-combo-box,
+.memora-number-box input,
+.memora-search-box input {
+  height: var(--memora-control-height);
+  border: 1px solid var(--memora-stroke);
+  border-radius: var(--memora-radius-md);
+  background: var(--memora-control);
+  color: var(--memora-text);
+  font: inherit;
+  font-size: 13px;
+}
+.memora-combo-box { min-width: 150px; padding: 0 30px 0 9px; }
+.memora-number-box { display: inline-flex; align-items: center; gap: 6px; color: var(--memora-text-secondary); font-size: 12px; }
+.memora-number-box input { width: 72px; padding: 0 8px; text-align: right; font-variant-numeric: tabular-nums; }
+.memora-combo-box:disabled,
+.memora-number-box input:disabled,
+.memora-search-box input:disabled { color: var(--memora-text-disabled); opacity: 0.65; }
+
+.memora-settings-section { overflow: hidden; border: 1px solid var(--memora-stroke); border-radius: var(--memora-radius-lg); background: var(--memora-card); }
+.memora-settings-row { display: flex; min-height: 56px; align-items: center; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--memora-stroke); }
+.memora-settings-row:last-child { border-bottom: 0; }
+.memora-settings-row__copy { min-width: 0; flex: 1; }
+.memora-settings-row__title { color: var(--memora-text); font-size: 13px; line-height: 18px; }
+.memora-settings-row__description { margin-top: 2px; color: var(--memora-text-secondary); font-size: 12px; line-height: 16px; text-wrap: pretty; }
+.memora-settings-row__note { margin-top: 4px; color: var(--memora-text-tertiary); font-size: 12px; line-height: 16px; text-wrap: pretty; }
+.memora-settings-row__control { flex: none; }
+
+.memora-progress { position: relative; width: 100%; height: 4px; overflow: hidden; border-radius: 2px; background: var(--memora-control-pressed); }
+.memora-progress__bar { display: block; height: 100%; border-radius: 2px; background: var(--memora-accent-usable); transition: width 150ms ease-out; }
+.memora-progress--indeterminate .memora-progress__bar { position: absolute; width: 36%; animation: memora-progress-slide 1.35s ease-in-out infinite; }
+@keyframes memora-progress-slide { from { left: -36%; } to { left: 100%; } }
+
+.memora-info-bar { display: flex; min-height: 48px; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--memora-stroke); border-radius: var(--memora-radius-lg); background: var(--memora-card); }
+.memora-info-bar__mark { display: inline-grid; width: 18px; height: 18px; flex: none; margin-top: 1px; border: 1px solid currentColor; border-radius: 50%; color: var(--memora-accent-usable); font-size: 12px; font-weight: 600; line-height: 1; place-items: center; }
+.memora-info-bar--success .memora-info-bar__mark { color: var(--memora-success); }
+.memora-info-bar--warning .memora-info-bar__mark { color: var(--memora-warning); }
+.memora-info-bar--error .memora-info-bar__mark { color: var(--memora-danger); }
+.memora-info-bar__copy { min-width: 0; flex: 1; }
+.memora-info-bar__title { font-size: 13px; font-weight: 600; }
+.memora-info-bar__message { margin-top: 2px; color: var(--memora-text-secondary); font-size: 13px; line-height: 18px; text-wrap: pretty; }
+
+.memora-search-box { position: relative; width: min(260px, 100%); }
+.memora-search-box__icon { position: absolute; top: 50%; left: 10px; z-index: 1; width: 14px; height: 14px; fill: none; stroke: var(--memora-text-tertiary); stroke-width: 1.2; transform: translateY(-50%); pointer-events: none; }
+.memora-search-box input { width: 100%; padding: 0 28px 0 32px; outline: none; }
+.memora-search-box input:focus { border-bottom: 2px solid var(--memora-accent-usable); }
+.memora-search-box input::placeholder { color: var(--memora-text-tertiary); }
+
+.memora-command-bar { display: flex; min-height: 40px; align-items: center; gap: 6px; padding: 4px; border-bottom: 1px solid var(--memora-stroke); }
+.memora-command-group { display: flex; align-items: center; gap: 4px; padding-right: 6px; border-right: 1px solid var(--memora-stroke); }
+.memora-command-group:last-child { padding-right: 0; border-right: 0; }
+
+.memora-tooltip-anchor { position: relative; display: inline-flex; }
+.memora-tooltip { position: absolute; z-index: 70; width: max-content; max-width: 260px; padding: 5px 8px; border: 1px solid var(--memora-stroke-surface); border-radius: var(--memora-radius-md); background: var(--memora-acrylic); box-shadow: var(--memora-shadow-flyout); color: var(--memora-text); font-size: 12px; line-height: 16px; opacity: 0; pointer-events: none; transition: opacity 80ms ease-out; }
+.memora-tooltip-anchor:hover .memora-tooltip,
+.memora-tooltip-anchor:focus-within .memora-tooltip { opacity: 1; transition-delay: 400ms; }
+.memora-tooltip--top { bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); }
+.memora-tooltip--bottom { top: calc(100% + 8px); left: 50%; transform: translateX(-50%); }
+.memora-tooltip--left { top: 50%; right: calc(100% + 8px); transform: translateY(-50%); }
+.memora-tooltip--right { top: 50%; left: calc(100% + 8px); transform: translateY(-50%); }
+
+.memora-dialog-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; padding: 24px; background: var(--memora-smoke); place-items: center; }
+.memora-dialog { width: min(440px, 100%); overflow: hidden; border: 1px solid var(--memora-stroke-surface); border-radius: var(--memora-radius-lg); background: var(--memora-acrylic); box-shadow: var(--memora-shadow-dialog); color: var(--memora-text); font-family: var(--memora-font); backdrop-filter: blur(30px) saturate(1.15); }
+.memora-dialog__body { padding: 24px; }
+.memora-dialog h2 { margin: 0 0 12px; font-family: var(--memora-font-display); font-size: 20px; font-weight: 600; line-height: 26px; text-wrap: balance; }
+.memora-dialog__content { color: var(--memora-text-secondary); font-size: 13px; line-height: 20px; text-wrap: pretty; }
+.memora-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px 16px; border-top: 1px solid var(--memora-stroke); }
+
+.memora-menu-dismiss { position: fixed; inset: 0; z-index: 1000; }
+.memora-context-menu { position: fixed; z-index: 1001; min-width: 190px; max-width: 320px; padding: 4px; border: 1px solid var(--memora-stroke-surface); border-radius: var(--memora-radius-lg); background: var(--memora-acrylic); box-shadow: var(--memora-shadow-flyout); color: var(--memora-text); font-family: var(--memora-font); backdrop-filter: blur(30px) saturate(1.15); }
+.memora-menu-item { display: flex; width: 100%; min-height: 32px; align-items: center; gap: 10px; padding: 4px 10px; border: 0; border-radius: var(--memora-radius-md); background: transparent; color: var(--memora-text); text-align: left; }
+.memora-menu-item:hover:not(:disabled) { background: var(--memora-subtle-hover); }
+.memora-menu-item:active:not(:disabled) { background: var(--memora-subtle-pressed); }
+.memora-menu-item--danger { color: var(--memora-danger); }
+.memora-menu-item__icon { display: inline-grid; width: 16px; height: 16px; place-items: center; }
+.memora-menu-separator { height: 1px; margin: 4px; background: var(--memora-stroke); }
+
+.memora-teaching-tip { width: min(360px, 100%); padding: 16px; border: 1px solid var(--memora-stroke-surface); border-radius: var(--memora-radius-lg); background: var(--memora-acrylic); box-shadow: var(--memora-shadow-flyout); color: var(--memora-text); font-family: var(--memora-font); }
+.memora-teaching-tip__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.memora-teaching-tip__header strong { font-size: 14px; text-wrap: balance; }
+.memora-teaching-tip__body { margin-top: 6px; color: var(--memora-text-secondary); font-size: 13px; line-height: 19px; text-wrap: pretty; }
+.memora-teaching-tip__action { margin-top: 12px; }
+
+.memora-navigation { display: flex; width: 248px; min-height: 300px; flex: none; flex-direction: column; gap: 4px; padding: 4px; transition: width 150ms ease-out; }
+.memora-navigation--collapsed { width: 48px; }
+.memora-navigation__items,
+.memora-navigation__footer { display: flex; flex-direction: column; gap: 2px; }
+.memora-navigation__footer { margin-top: auto; }
+.memora-nav-item { position: relative; display: flex; width: 100%; min-height: 36px; align-items: center; gap: 12px; padding: 5px 10px; border: 0; border-radius: var(--memora-radius-md); background: transparent; color: var(--memora-text); text-align: left; }
+.memora-nav-item:hover:not(:disabled) { background: var(--memora-subtle-hover); }
+.memora-nav-item--selected { background: var(--memora-control); }
+.memora-nav-item--collapsed { justify-content: center; padding-inline: 0; }
+.memora-nav-item__indicator { position: absolute; left: 0; width: 3px; height: 0; border-radius: 2px; background: var(--memora-accent-usable); opacity: 0; transition: height 150ms ease-out, opacity 150ms ease-out; }
+.memora-nav-item--selected .memora-nav-item__indicator { height: 16px; opacity: 1; }
+.memora-nav-item__icon { display: inline-grid; width: 16px; height: 16px; flex: none; color: var(--memora-text-secondary); place-items: center; }
+.memora-nav-item__label { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+
+.memora-data-grid-wrap { position: relative; overflow: auto; border: 1px solid var(--memora-stroke); border-radius: var(--memora-radius-lg); background: var(--memora-card); }
+.memora-data-grid { width: 100%; border-collapse: collapse; color: var(--memora-text); font-family: var(--memora-font); font-size: 13px; }
+.memora-data-grid th { position: sticky; top: 0; z-index: 1; height: 32px; padding: 0 10px; border-bottom: 1px solid var(--memora-stroke); background: color-mix(in srgb, var(--memora-card) 94%, transparent); color: var(--memora-text-secondary); font-weight: 400; text-align: left; backdrop-filter: blur(20px); }
+.memora-data-grid td { height: 34px; padding: 5px 10px; border-bottom: 1px solid var(--memora-stroke); white-space: nowrap; }
+.memora-data-grid tbody tr:last-child td { border-bottom: 0; }
+.memora-data-grid tbody tr { outline-offset: -2px; }
+.memora-data-grid tbody tr:hover { background: var(--memora-subtle-hover); }
+.memora-data-grid tbody tr[aria-selected="true"] { background: color-mix(in srgb, var(--memora-accent-usable) 12%, transparent); }
+.memora-grid-sort { display: flex; width: 100%; height: 100%; align-items: center; justify-content: inherit; gap: 5px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; }
+.memora-data-grid__empty { padding: 32px; color: var(--memora-text-secondary); text-align: center; }
+
+@media (pointer: coarse) {
+  .memora-ui-root { --memora-control-height: 40px; }
+  .memora-menu-item,
+  .memora-nav-item,
+  .memora-data-grid td { min-height: 40px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .memora-ui-root *,
+  .memora-ui-root *::before,
+  .memora-ui-root *::after,
+  .memora-dialog *,
+  .memora-context-menu * {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :root,
+  .memora-ui-root {
+    --memora-accent-usable: Highlight;
+    --memora-text: CanvasText;
+    --memora-text-secondary: CanvasText;
+    --memora-stroke: CanvasText;
+    --memora-focus: Highlight;
+  }
+  .memora-button--primary,
+  .memora-toggle--checked .memora-toggle__track { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+}

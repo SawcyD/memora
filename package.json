@@ -1,17 +1,29 @@
 {
   "name": "memora",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.5.0",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "ui:build": "npm run build -w packages/memora-ui",
+    "ui:typecheck": "npm run typecheck -w packages/memora-ui",
+    "ui:demo": "npm run demo -w packages/memora-ui",
+    "ui:pack": "npm pack -w packages/memora-ui",
+    "version:check": "node scripts/check-version.mjs",
+    "updater:prepare-config": "node scripts/prepare-updater-config.mjs"
   },
   "dependencies": {
+    "@memora/ui": "npm:@sawcy/memora-ui@^0.1.0",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-updater": "^2.10.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

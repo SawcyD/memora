@@ -1,10 +1,18 @@
 import { MemoryGraph } from "@/components/MemoryGraph";
-import { Button, InfoRow, SectionHeader } from "@/components/primitives";
+import { Button, InfoBar, InfoRow, SectionHeader } from "@/components/primitives";
 import { formatBytes, formatBytesPair, formatPercent } from "@/system/format";
+import { formatRate, pagingActivity } from "@/system/paging";
 import type { MemoryState } from "@/system/useMemory";
 
-export function HomePage({ memory }: { memory: MemoryState }) {
+export function HomePage({
+  memory,
+  onOptimize,
+}: {
+  memory: MemoryState;
+  onOptimize: () => void;
+}) {
   const { current, history, error } = memory;
+  const paging = pagingActivity(history);
 
   if (error) {
     return (
@@ -33,10 +41,32 @@ export function HomePage({ memory }: { memory: MemoryState }) {
           </div>
         </div>
 
-        <Button accent disabled={!current}>
+        <Button accent disabled={!current} onClick={onOptimize}>
           Optimize memory
         </Button>
       </div>
+
+      {/* Commit charge nearing the limit causes allocation failures that
+          surface as unexplained application crashes. The data is already
+          sampled every second; saying so costs nothing. */}
+      {current && current.commitLimit > 0 &&
+        current.commitTotal / current.commitLimit >= 0.9 && (
+          <div className="mb-4">
+            <InfoBar
+              title="Committed memory is close to the system limit"
+              message={`${formatBytesPair(current.commitTotal, current.commitLimit)} committed. When this limit is reached, applications fail to allocate memory and may close unexpectedly. Increasing the paging file size, or closing some applications, avoids it. Trimming working sets does not help: it moves pages within RAM and does not reduce commit charge.`}
+            />
+          </div>
+        )}
+
+      {current && current.percentInUse >= 80 && paging.state === "sustained" && (
+        <div className="mb-4">
+          <InfoBar
+            title="High memory use is causing disk-backed paging"
+            message={`Windows has repeatedly read memory from storage during the recent sample (${formatRate(paging.readOperationsPerSecond)} page-read operations). Closing an unused memory-heavy application can help. Working-set trimming may make the paging worse.`}
+          />
+        </div>
+      )}
 
       <MemoryGraph history={history} seconds={60} className="mb-5" />
 

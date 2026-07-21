@@ -1,6 +1,15 @@
 import { useMemo } from "react";
 import type { MemorySnapshot } from "@/system/types";
 
+/** Leading-edge axis label, singular where the count is one. */
+function axisLabel(seconds: number): string {
+  if (seconds < 60) return `${seconds} seconds`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+  const hours = Math.round(minutes / 60);
+  return hours === 1 ? "1 hour" : `${hours} hours`;
+}
+
 /**
  * Task Manager's memory graph: a filled area against a fixed 0–100% axis with a
  * faint grid. No gradients, no animation, no decoration — the shape is the
@@ -84,7 +93,7 @@ export function MemoryGraph({
       </svg>
 
       <div className="flex justify-between px-2 pb-1 text-[11px] text-[var(--text-tertiary)]">
-        <span>{seconds >= 60 ? `${Math.round(seconds / 60)} minutes` : `${seconds} seconds`}</span>
+        <span>{axisLabel(seconds)}</span>
         <span>0</span>
       </div>
       <span className="absolute right-2 top-1 text-[11px] text-[var(--text-tertiary)]">

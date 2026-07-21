@@ -1,6 +1,6 @@
 [package]
 name = "memora"
-version = "0.1.0"
+version = "0.5.0"
 description = "Memora — Windows 11 memory manager"
 authors = ["Memora"]
 edition = "2021"
@@ -21,6 +21,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-notification = "2.3.3"
 tauri-plugin-single-instance = "2.4.3"
+tauri-plugin-updater = "2.10.0"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
@@ -32,6 +33,7 @@ windows = { version = "0.62", features = [
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Registry",
   "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Accessibility",
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
   "Wdk_System_SystemInformation",

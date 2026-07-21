@@ -20,7 +20,11 @@ use super::clean::Method;
 /// the variants, not the fields inside them, which would leave the frontend
 /// reading `undefined` for every parameter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "kind")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum Trigger {
     /// Usage at or above `percent` continuously for `sustained_secs`.
     ///
@@ -109,14 +113,27 @@ impl Default for Config {
             profiles: vec![
                 Profile {
                     name: "Balanced".into(),
-                    // The only default rule is the idle one: the decay cost is
-                    // paid while nobody is working.
-                    rules: vec![Rule {
-                        id: "balanced-idle".into(),
-                        enabled: true,
-                        trigger: Trigger::SystemIdle { idle_mins: 15 },
-                        ineffective_limit: 3,
-                    }],
+                    // The master automation switch is still opt-in. Once the
+                    // user enables it, Balanced handles both sustained high
+                    // usage and an idle machine instead of silently ignoring
+                    // the memory threshold they reasonably expect it to use.
+                    rules: vec![
+                        Rule {
+                            id: "balanced-high-usage".into(),
+                            enabled: true,
+                            trigger: Trigger::UsageAbove {
+                                percent: 85,
+                                sustained_secs: 60,
+                            },
+                            ineffective_limit: 3,
+                        },
+                        Rule {
+                            id: "balanced-idle".into(),
+                            enabled: true,
+                            trigger: Trigger::SystemIdle { idle_mins: 15 },
+                            ineffective_limit: 3,
+                        },
+                    ],
                     ..Default::default()
                 },
                 Profile {
@@ -147,6 +164,34 @@ impl Default for Config {
 
 impl Config {
     pub fn sanitized(mut self) -> Self {
+        if self.profiles.is_empty() {
+            self.profiles = Config::default().profiles;
+        }
+
+        // Builds that predate the high-usage rule persisted a Balanced profile
+        // containing only the idle rule. There is no UI for deleting rules, so
+        // a missing usage rule is unambiguously legacy data and can be migrated.
+        if let Some(balanced) = self.profiles.iter_mut().find(|p| p.name == "Balanced") {
+            if !balanced
+                .rules
+                .iter()
+                .any(|r| matches!(r.trigger, Trigger::UsageAbove { .. }))
+            {
+                balanced.rules.insert(
+                    0,
+                    Rule {
+                        id: "balanced-high-usage".into(),
+                        enabled: true,
+                        trigger: Trigger::UsageAbove {
+                            percent: 85,
+                            sustained_secs: 60,
+                        },
+                        ineffective_limit: 3,
+                    },
+                );
+            }
+        }
+
         for p in &mut self.profiles {
             p.min_interval_secs = p.min_interval_secs.max(300);
             // A run with no methods would still burn a cooldown and pollute the
@@ -173,9 +218,6 @@ impl Config {
             }
         }
 
-        if self.profiles.is_empty() {
-            self.profiles.push(Profile::default());
-        }
         // A missing active profile falls back rather than silently disabling.
         if !self.profiles.iter().any(|p| p.name == self.active_profile) {
             self.active_profile = self.profiles[0].name.clone();
@@ -351,7 +393,10 @@ impl Engine {
         }
 
         self.last_run_ms = Some(ctx.now_ms);
-        self.states.entry(rule.id.clone()).or_default().last_fired_ms = Some(ctx.now_ms);
+        self.states
+            .entry(rule.id.clone())
+            .or_default()
+            .last_fired_ms = Some(ctx.now_ms);
 
         Decision::Run {
             rule: rule.id.clone(),
@@ -520,10 +565,18 @@ mod tests {
 
         let mut c = ctx(0);
         c.percent_in_use = 95.0;
-        assert_eq!(e.evaluate(&cfg, c), Decision::Idle, "must not fire instantly");
+        assert_eq!(
+            e.evaluate(&cfg, c),
+            Decision::Idle,
+            "must not fire instantly"
+        );
 
         c.now_ms = 119 * SEC;
-        assert_eq!(e.evaluate(&cfg, c), Decision::Idle, "still short of the window");
+        assert_eq!(
+            e.evaluate(&cfg, c),
+            Decision::Idle,
+            "still short of the window"
+        );
 
         c.now_ms = 120 * SEC;
         assert!(is_run(&e.evaluate(&cfg, c)), "fires once sustained");
@@ -551,7 +604,11 @@ mod tests {
         assert_eq!(e.evaluate(&cfg, c), Decision::Idle);
 
         c.now_ms = 129 * SEC;
-        assert_eq!(e.evaluate(&cfg, c), Decision::Idle, "60s from the restart, not the first spike");
+        assert_eq!(
+            e.evaluate(&cfg, c),
+            Decision::Idle,
+            "60s from the restart, not the first spike"
+        );
 
         c.now_ms = 130 * SEC;
         assert!(is_run(&e.evaluate(&cfg, c)));
@@ -622,7 +679,10 @@ mod tests {
 
         c.now_ms += 6 * MIN;
         c.idle_secs += 360;
-        assert!(is_run(&e.evaluate(&cfg, c)), "pause is a duration, not a mode");
+        assert!(
+            is_run(&e.evaluate(&cfg, c)),
+            "pause is a duration, not a mode"
+        );
     }
 
     /// The primary defence against the trim/decay loop.
@@ -690,7 +750,10 @@ mod tests {
             runs <= 12,
             "cooldown must bound runs; got {runs} in an hour of pinned usage"
         );
-        assert!(runs >= 10, "but it should still act periodically; got {runs}");
+        assert!(
+            runs >= 10,
+            "but it should still act periodically; got {runs}"
+        );
     }
 
     #[test]
@@ -824,11 +887,50 @@ mod tests {
         let cfg = Config::default().sanitized();
         assert!(!cfg.enabled, "automation must ship disabled");
 
+        let balanced = cfg.profiles.iter().find(|p| p.name == "Balanced").unwrap();
+        assert!(
+            balanced.rules.iter().any(|r| {
+                r.enabled
+                    && matches!(
+                        r.trigger,
+                        Trigger::UsageAbove {
+                            percent: 85,
+                            sustained_secs: 60
+                        }
+                    )
+            }),
+            "Balanced must act on sustained high memory once automation is enabled"
+        );
+
         let gaming = cfg.profiles.iter().find(|p| p.name == "Gaming").unwrap();
         assert!(
             gaming.rules.is_empty(),
             "Gaming must not mean more aggressive trimming"
         );
+    }
+
+    #[test]
+    fn legacy_balanced_profile_gains_the_high_usage_rule() {
+        let cfg = Config {
+            profiles: vec![Profile {
+                name: "Balanced".into(),
+                rules: vec![Rule {
+                    id: "balanced-idle".into(),
+                    enabled: true,
+                    trigger: Trigger::SystemIdle { idle_mins: 15 },
+                    ineffective_limit: 3,
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+        .sanitized();
+
+        let balanced = cfg.active().unwrap();
+        assert!(balanced
+            .rules
+            .iter()
+            .any(|r| matches!(r.trigger, Trigger::UsageAbove { .. })));
     }
 
     /// Enabling automation must not immediately fire on a condition that was
@@ -882,7 +984,10 @@ mod tests {
     #[test]
     fn trigger_round_trips_through_json() {
         for t in [
-            Trigger::UsageAbove { percent: 90, sustained_secs: 120 },
+            Trigger::UsageAbove {
+                percent: 90,
+                sustained_secs: 120,
+            },
             Trigger::Scheduled { every_mins: 30 },
             Trigger::SystemIdle { idle_mins: 15 },
         ] {
@@ -915,6 +1020,9 @@ mod tests {
         // What matters is the recovery path: Settings uses serde(default), so a
         // bad automation block yields defaults, and defaults are safe.
         let safe = Config::default().sanitized();
-        assert!(!safe.enabled, "recovery must never leave automation enabled");
+        assert!(
+            !safe.enabled,
+            "recovery must never leave automation enabled"
+        );
     }
 }

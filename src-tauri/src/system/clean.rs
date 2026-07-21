@@ -44,7 +44,9 @@ impl Method {
 #[cfg(windows)]
 pub fn is_elevated() -> bool {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+    use windows::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     // SAFETY: token is closed on both paths; TOKEN_ELEVATION is the documented
@@ -159,6 +161,7 @@ pub fn resolve_excluded(
 #[cfg(windows)]
 mod imp {
     use super::*;
+    use windows::core::w;
     use windows::Win32::Foundation::{CloseHandle, HANDLE, LUID};
     use windows::Win32::Security::{
         AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED,
@@ -169,7 +172,6 @@ mod imp {
         GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
         PROCESS_SET_QUOTA,
     };
-    use windows::core::w;
 
     /// Enables a privilege on Memora's own token. Returns false when the
     /// process is not elevated, which is expected rather than exceptional.
@@ -336,7 +338,9 @@ mod imp {
         if status >= 0 {
             Ok(())
         } else {
-            Err(format!("NtSetSystemInformation failed (NTSTATUS {status:#010x})"))
+            Err(format!(
+                "NtSetSystemInformation failed (NTSTATUS {status:#010x})"
+            ))
         }
     }
 
@@ -442,9 +446,18 @@ pub fn run(
     }
 
     let after = memory::snapshot()?;
-    let trimmed = details.iter().filter(|d| d.outcome == Outcome::Trimmed).count() as u32;
-    let skipped = details.iter().filter(|d| d.outcome == Outcome::Skipped).count() as u32;
-    let errors = details.iter().filter(|d| d.outcome == Outcome::Failed).count() as u32;
+    let trimmed = details
+        .iter()
+        .filter(|d| d.outcome == Outcome::Trimmed)
+        .count() as u32;
+    let skipped = details
+        .iter()
+        .filter(|d| d.outcome == Outcome::Skipped)
+        .count() as u32;
+    let errors = details
+        .iter()
+        .filter(|d| d.outcome == Outcome::Failed)
+        .count() as u32;
 
     Ok(CleanReport {
         available_before: before.physical_available,
@@ -498,7 +511,11 @@ mod tests {
         let results = imp::trim_working_sets(&[me.clone()], &[], &cancel, |p| seen.push(p));
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].outcome, Outcome::Trimmed, "self-trim must succeed");
+        assert_eq!(
+            results[0].outcome,
+            Outcome::Trimmed,
+            "self-trim must succeed"
+        );
         assert!(
             results[0].working_set_after < results[0].working_set_before,
             "working set should shrink: {} -> {}",
@@ -591,7 +608,9 @@ mod tests {
             threads: 1,
             handles: 1,
             cpu_percent: None,
+            page_faults_per_sec: None,
             accessible: true,
+            minimized_trimmed: false,
         }
     }
 
@@ -599,20 +618,32 @@ mod tests {
     /// system-wide trim is a live side effect and does not belong in a suite.
     #[test]
     fn name_exclusions_match_case_insensitively() {
-        let procs = vec![fake(10, "Game.exe"), fake(11, "editor.exe"), fake(12, "other.exe")];
+        let procs = vec![
+            fake(10, "Game.exe"),
+            fake(11, "editor.exe"),
+            fake(12, "other.exe"),
+        ];
 
         let skip = resolve_excluded(&procs, &[], &["GAME.EXE".into()]);
         assert_eq!(skip, vec![10], "matching must ignore case on both sides");
 
         let skip = resolve_excluded(&procs, &[], &["  Editor.EXE  ".into()]);
-        assert_eq!(skip, vec![11], "surrounding whitespace must not defeat a match");
+        assert_eq!(
+            skip,
+            vec![11],
+            "surrounding whitespace must not defeat a match"
+        );
     }
 
     /// A name protects every instance, which is the point of naming rather
     /// than pinning a pid.
     #[test]
     fn name_exclusions_cover_every_instance() {
-        let procs = vec![fake(10, "chrome.exe"), fake(11, "chrome.exe"), fake(12, "other.exe")];
+        let procs = vec![
+            fake(10, "chrome.exe"),
+            fake(11, "chrome.exe"),
+            fake(12, "other.exe"),
+        ];
         let skip = resolve_excluded(&procs, &[], &["chrome.exe".into()]);
         assert_eq!(skip, vec![10, 11]);
     }
@@ -621,7 +652,11 @@ mod tests {
     fn pid_and_name_exclusions_combine_without_duplicates() {
         let procs = vec![fake(10, "game.exe"), fake(11, "other.exe")];
         let skip = resolve_excluded(&procs, &[10, 11], &["game.exe".into()]);
-        assert_eq!(skip, vec![10, 11], "pid 10 is named too; it must appear once");
+        assert_eq!(
+            skip,
+            vec![10, 11],
+            "pid 10 is named too; it must appear once"
+        );
     }
 
     #[test]

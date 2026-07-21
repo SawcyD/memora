@@ -214,7 +214,13 @@ pub fn render(percent: u8, state: UsageState, accent: Rgb, show_digits: bool) ->
             );
         } else {
             // Single digit: centred, no leading zero.
-            draw_glyph(&mut c, &DIGITS[percent as usize], CENTER as i32 - glyph_w / 2, top, color);
+            draw_glyph(
+                &mut c,
+                &DIGITS[percent as usize],
+                CENTER as i32 - glyph_w / 2,
+                top,
+                color,
+            );
         }
     }
 
@@ -243,7 +249,10 @@ mod tests {
         let mut prev = 0;
         for pct in [0u8, 25, 50, 75, 100] {
             let ink = alpha_sum(&render(pct, UsageState::Normal, ACCENT, false));
-            assert!(ink > prev, "{pct}% produced no more ink than the previous step");
+            assert!(
+                ink > prev,
+                "{pct}% produced no more ink than the previous step"
+            );
             prev = ink;
         }
     }
@@ -267,7 +276,10 @@ mod tests {
     fn full_usage_drops_the_digits() {
         let full = render(100, UsageState::Critical, ACCENT, true);
         let bare = render(100, UsageState::Critical, ACCENT, false);
-        assert_eq!(full, bare, "100% must render as a filled ring with no digits");
+        assert_eq!(
+            full, bare,
+            "100% must render as a filled ring with no digits"
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import { MemoryGraph } from "@/components/MemoryGraph";
 import { Button, InfoBar, InfoRow, SectionHeader } from "@/components/primitives";
 import { formatBytes, formatBytesPair, formatPercent } from "@/system/format";
+import { formatRate, pagingActivity } from "@/system/paging";
 import type { MemoryState } from "@/system/useMemory";
 
 export function HomePage({
@@ -11,6 +12,7 @@ export function HomePage({
   onOptimize: () => void;
 }) {
   const { current, history, error } = memory;
+  const paging = pagingActivity(history);
 
   if (error) {
     return (
@@ -56,6 +58,15 @@ export function HomePage({
             />
           </div>
         )}
+
+      {current && current.percentInUse >= 80 && paging.state === "sustained" && (
+        <div className="mb-4">
+          <InfoBar
+            title="High memory use is causing disk-backed paging"
+            message={`Windows has repeatedly read memory from storage during the recent sample (${formatRate(paging.readOperationsPerSecond)} page-read operations). Closing an unused memory-heavy application can help. Working-set trimming may make the paging worse.`}
+          />
+        </div>
+      )}
 
       <MemoryGraph history={history} seconds={60} className="mb-5" />
 

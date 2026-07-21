@@ -27,6 +27,8 @@ function sourceLabel(s: HistoryRecord["source"]): string {
       return "Tray";
     case "automation":
       return `Automation · ${s.rule}`;
+    case "minimize":
+      return `Minimized · ${s.process}`;
   }
 }
 
@@ -103,6 +105,9 @@ export function HistoryPage() {
                   After 30s
                 </th>
                 <th scope="col" className="border-b border-[var(--stroke-divider)] px-2 py-1.5 text-right font-normal">
+                  Working set
+                </th>
+                <th scope="col" className="border-b border-[var(--stroke-divider)] px-2 py-1.5 text-right font-normal">
                   Trimmed
                 </th>
                 <th scope="col" className="border-b border-[var(--stroke-divider)] px-2 py-1.5 text-right font-normal">
@@ -127,7 +132,8 @@ export function HistoryPage() {
                     )}
                   </td>
                   <td className="tabular px-2 py-1.5 text-right">
-                    {r.outcome.kind === "completed" || r.outcome.kind === "cancelled"
+                    {(r.outcome.kind === "completed" || r.outcome.kind === "cancelled") &&
+                    r.source.kind !== "minimize"
                       ? signed(r.recoveredImmediate)
                       : "—"}
                   </td>
@@ -139,6 +145,11 @@ export function HistoryPage() {
                     ) : (
                       signed(r.recoveredSettled)
                     )}
+                  </td>
+                  <td className="tabular px-2 py-1.5 text-right">
+                    {r.workingSetBefore !== null && r.workingSetAfter !== null
+                      ? `−${formatBytes(Math.max(0, r.workingSetBefore - r.workingSetAfter))}`
+                      : "—"}
                   </td>
                   <td className="tabular px-2 py-1.5 text-right">{r.processesTrimmed}</td>
                   <td className="tabular px-2 py-1.5 text-right">
@@ -152,8 +163,8 @@ export function HistoryPage() {
       )}
 
       <p className="mt-3 text-[12px] leading-4 text-[var(--text-secondary)]">
-        The 30-second column is the figure that matters. Trimming moves pages to the standby list
-        where they remain in RAM, so the immediate increase decays as processes resume.
+        For full optimizations, the 30-second column is the figure that matters. Per-app minimize
+        rules report the affected working set instead; Windows reloads those pages when needed.
       </p>
 
       {confirmClear && (

@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { MemoryGraph } from "@/components/MemoryGraph";
-import { InfoRow, SectionHeader } from "@/components/primitives";
+import { InfoBar, InfoRow, SectionHeader } from "@/components/primitives";
 import { formatBytes, formatBytesPair, formatPercent } from "@/system/format";
+import { formatRate, pagingActivity } from "@/system/paging";
 import type { MemoryDetail } from "@/system/types";
 import type { MemoryState } from "@/system/useMemory";
 
@@ -20,6 +21,33 @@ export function MemoryPage({ memory }: { memory: MemoryState }) {
   const { current, history, error } = memory;
   const [range, setRange] = useState(60);
   const [detail, setDetail] = useState<MemoryDetail | null>(null);
+  const paging = useMemo(() => pagingActivity(history), [history]);
+
+  const commitTrend = useMemo(() => {
+    const last = history[history.length - 1];
+    if (!last) return "Collecting commit trend data…";
+    const first = history.find((sample) => sample.timestampMs >= last.timestampMs - 60_000);
+    if (!first || last.timestampMs - first.timestampMs < 15_000) {
+      return "Collecting commit trend data…";
+    }
+    const elapsedMinutes = (last.timestampMs - first.timestampMs) / 60_000;
+    const perMinute = (last.commitTotal - first.commitTotal) / elapsedMinutes;
+    const pressure = last.commitLimit > 0 ? (last.commitTotal / last.commitLimit) * 100 : 0;
+    const noiseFloor = 32 * 1024 * 1024;
+    let direction = "stable";
+    if (perMinute > noiseFloor) direction = `rising ${formatBytes(perMinute)}/min`;
+    if (perMinute < -noiseFloor) direction = `falling ${formatBytes(-perMinute)}/min`;
+
+    let estimate = "";
+    const target = last.commitLimit * 0.9;
+    if (perMinute > noiseFloor && last.commitTotal < target) {
+      const minutes = (target - last.commitTotal) / perMinute;
+      if (minutes >= 1 && minutes <= 24 * 60) {
+        estimate = ` · about ${Math.ceil(minutes)} min to 90% at this rate`;
+      }
+    }
+    return `Commit ${direction} · ${pressure.toFixed(0)}% of limit${estimate}`;
+  }, [history]);
 
   useEffect(() => {
     const load = () =>
@@ -95,6 +123,22 @@ export function MemoryPage({ memory }: { memory: MemoryState }) {
           : `Showing the last ${RANGES.find((r) => r.secs === range)?.label}.`}
       </p>
 
+      <p
+        className="mb-3 text-[12px] text-[var(--text-secondary)]"
+        title="Commit includes memory promised to applications, backed by RAM or the page file. The estimate is a trend, not a prediction."
+      >
+        {commitTrend}
+      </p>
+
+      {current && current.percentInUse >= 80 && paging.state === "sustained" && (
+        <div className="mb-4">
+          <InfoBar
+            title="Windows is repeatedly reading memory pages from disk"
+            message={`${formatRate(paging.readOperationsPerSecond)} page-read operations and ${formatRate(paging.pagesReadPerSecond)} pages read over the recent sample. This can cause pauses. Trimming working sets may increase this activity because applications must reload pages.`}
+          />
+        </div>
+      )}
+
       <MemoryGraph history={history} seconds={range} className="mb-5" />
 
       <div className="grid grid-cols-1 gap-x-10 sm:grid-cols-2">
@@ -117,15 +161,59 @@ export function MemoryPage({ memory }: { memory: MemoryState }) {
           <InfoRow
             label="Committed"
             value={current ? formatBytesPair(current.commitTotal, current.commitLimit) : "—"}
+            help="Memory Windows has promised to processes compared with the RAM plus page-file limit."
           />
-          <InfoRow label="Paged pool" value={current ? formatBytes(current.kernelPaged) : "—"} />
+          <InfoRow
+            label="Paged pool"
+            value={current ? formatBytes(current.kernelPaged) : "—"}
+            help="Kernel memory that Windows may move to disk."
+          />
           <InfoRow
             label="Non-paged pool"
             value={current ? formatBytes(current.kernelNonpaged) : "—"}
+            help="Kernel memory that must remain in physical RAM."
           />
           <InfoRow label="Compressed" value={opt(detail?.compressed)} />
           <InfoRow label="Installed" value={opt(detail?.physicalInstalled)} />
           <InfoRow label="Hardware reserved" value={opt(detail?.hardwareReserved)} />
+        </div>
+      </div>
+
+      <div className="mt-5 max-w-[620px]">
+        <h3 className="mb-1 text-[13px] font-semibold">Paging activity</h3>
+        <div className="grid grid-cols-1 gap-x-10 sm:grid-cols-2">
+          <div>
+            <InfoRow
+              label="Status"
+              value={
+                paging.state === "collecting"
+                  ? "Collecting…"
+                  : paging.state === "quiet"
+                    ? "No disk paging detected"
+                    : paging.state === "brief"
+                      ? "Brief disk paging"
+                      : "Sustained disk paging"
+              }
+              help="Sustained means page-read I/O occurred in most sampled seconds. It is not based on RAM usage alone."
+            />
+            <InfoRow
+              label="Page faults"
+              value={formatRate(paging.faultsPerSecond)}
+              help="All faults, including ordinary soft faults resolved from RAM. A high value alone does not mean storage is slow."
+            />
+          </div>
+          <div>
+            <InfoRow
+              label="Pages read from disk"
+              value={formatRate(paging.pagesReadPerSecond)}
+              help="Memory pages Windows read from storage to satisfy faults. This is the disk-backed signal."
+            />
+            <InfoRow
+              label="Page-read operations"
+              value={formatRate(paging.readOperationsPerSecond)}
+              help="Physical I/O operations used for page reads; one operation may retrieve several pages."
+            />
+          </div>
         </div>
       </div>
 

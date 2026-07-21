@@ -9,6 +9,10 @@ export interface MemorySnapshot {
   systemCache: number;
   kernelPaged: number;
   kernelNonpaged: number;
+  /** Cumulative 32-bit counters since boot; differenced into rates by paging.ts. */
+  pageFaultCount: number | null;
+  pageReadCount: number | null;
+  pageReadIoCount: number | null;
   pageSize: number;
   timestampMs: number;
 }
@@ -45,7 +49,10 @@ export interface ProcessInfo {
   handles: number;
   /** Null until a second sample exists to difference against — unknown, not 0. */
   cpuPercent: number | null;
+  /** All page faults, soft and hard. This is not a disk-I/O counter. */
+  pageFaultsPerSec: number | null;
   accessible: boolean;
+  minimizedTrimmed: boolean;
 }
 
 /** Mirrors `Method` in src-tauri/src/system/clean.rs. */
@@ -105,14 +112,25 @@ export interface Settings {
   showOptimizationNotifications: boolean;
   /** Process names, lowercased. Names not pids: pids change across reboots. */
   excludedProcesses: string[];
+  minimizeTrim: MinimizeTrimConfig;
   automation: AutomationConfig;
+}
+
+export interface MinimizeTrimConfig {
+  enabled: boolean;
+  delaySecs: number;
+  minimumWorkingSetMb: number;
+  cooldownSecs: number;
+  /** Lowercased executable names selected from the Processes page. */
+  applications: string[];
 }
 
 /** Mirrors `Source` in src-tauri/src/system/history.rs. */
 export type HistorySource =
   | { kind: "manual" }
   | { kind: "tray" }
-  | { kind: "automation"; rule: string };
+  | { kind: "automation"; rule: string }
+  | { kind: "minimize"; process: string };
 
 /** Mirrors `RunOutcome`. */
 export type RunOutcome =
@@ -136,6 +154,9 @@ export interface HistoryRecord {
   errors: number;
   durationMs: number;
   unavailable: string[];
+  targetPid: number | null;
+  workingSetBefore: number | null;
+  workingSetAfter: number | null;
 }
 
 /** Mirrors `Trigger` in src-tauri/src/system/automation.rs. */

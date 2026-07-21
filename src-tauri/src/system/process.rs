@@ -28,9 +28,16 @@ pub struct ProcessInfo {
     /// previous sample. Null on the first sample, when there is no baseline to
     /// difference against — an unknown value, not zero.
     pub cpu_percent: Option<f64>,
+    /// All page faults per second (soft and hard). Disk-backed paging is
+    /// reported separately at system level; this must not be labelled as hard
+    /// faults.
+    pub page_faults_per_sec: Option<f64>,
     /// False when the process could not be opened for query. Its counters are
     /// then best-effort and trimming it will be skipped.
     pub accessible: bool,
+    /// True while Windows still reports the window minimized after an
+    /// automatic minimize rule trimmed this process.
+    pub minimized_trimmed: bool,
 }
 
 #[cfg(windows)]
@@ -76,8 +83,9 @@ mod imp {
         }
     }
 
-    /// Total CPU time (kernel + user) consumed by a process, in 100ns ticks.
-    pub fn cpu_time_of(h: HANDLE) -> Option<u64> {
+    /// Process creation time and total CPU time, in 100ns ticks. Creation time
+    /// prevents a quickly reused pid from inheriting another process's rate.
+    pub fn process_times_of(h: HANDLE) -> Option<(u64, u64)> {
         use windows::Win32::Foundation::FILETIME;
         use windows::Win32::System::Threading::GetProcessTimes;
 
@@ -89,15 +97,14 @@ mod imp {
         );
 
         // SAFETY: all four out-params are owned locals valid for the call.
-        let ok = unsafe {
-            GetProcessTimes(h, &mut creation, &mut exit, &mut kernel, &mut user).is_ok()
-        };
+        let ok =
+            unsafe { GetProcessTimes(h, &mut creation, &mut exit, &mut kernel, &mut user).is_ok() };
         if !ok {
             return None;
         }
 
         let ticks = |f: FILETIME| ((f.dwHighDateTime as u64) << 32) | f.dwLowDateTime as u64;
-        Some(ticks(kernel) + ticks(user))
+        Some((ticks(creation), ticks(kernel) + ticks(user)))
     }
 
     pub fn handle_count_of(h: HANDLE) -> Option<u32> {
@@ -121,8 +128,8 @@ mod imp {
         info.dwNumberOfProcessors.max(1)
     }
 
-    /// Returns (working set, commit charge).
-    fn memory_counters(h: HANDLE) -> Option<(u64, u64)> {
+    /// Returns (working set, commit charge, cumulative page faults).
+    fn memory_counters(h: HANDLE) -> Option<(u64, u64, u32)> {
         let mut ex = PROCESS_MEMORY_COUNTERS_EX::default();
         let size = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
 
@@ -137,20 +144,31 @@ mod imp {
 
         // PrivateUsage and PagefileUsage are the same underlying counter; only
         // one of them is reported, as commit.
-        Some((ex.WorkingSetSize as u64, ex.PagefileUsage as u64))
+        Some((
+            ex.WorkingSetSize as u64,
+            ex.PagefileUsage as u64,
+            ex.PageFaultCount,
+        ))
     }
 
     /// Current working set of an already-open process, for measuring the effect
     /// of a trim without re-enumerating.
     pub fn working_set_of(h: HANDLE) -> Option<u64> {
-        memory_counters(h).map(|(ws, _)| ws)
+        memory_counters(h).map(|(ws, _, _)| ws)
     }
 
-    /// One pass over the process list. Also returns each process's cumulative
-    /// CPU ticks, which only become a percentage once differenced against a
-    /// previous pass — see `Sampler`.
-    pub fn enumerate_with_cpu() -> Result<(Vec<ProcessInfo>, Vec<(u32, u64)>), String> {
-        let mut cpu_times: Vec<(u32, u64)> = Vec::with_capacity(256);
+    #[derive(Clone, Copy)]
+    pub struct RawCounters {
+        pub pid: u32,
+        pub created: u64,
+        pub cpu_ticks: u64,
+        pub page_faults: Option<u32>,
+    }
+
+    /// One pass over the process list plus cumulative counters that only
+    /// become rates after a second sample — see `Sampler`.
+    pub fn enumerate_with_cpu() -> Result<(Vec<ProcessInfo>, Vec<RawCounters>), String> {
+        let mut counters: Vec<RawCounters> = Vec::with_capacity(256);
         // SAFETY: snapshot handle is checked and wrapped for close-on-drop.
         let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
             .map_err(|e| format!("CreateToolhelp32Snapshot failed: {e}"))?;
@@ -164,7 +182,7 @@ mod imp {
         let mut out = Vec::with_capacity(256);
         // SAFETY: dwSize is set as the API requires; iteration stops on Err.
         if unsafe { Process32FirstW(snapshot.0, &mut entry) }.is_err() {
-            return Ok((out, cpu_times));
+            return Ok((out, counters));
         }
 
         loop {
@@ -183,18 +201,26 @@ mod imp {
                 threads: entry.cntThreads,
                 handles: 0,
                 cpu_percent: None,
+                page_faults_per_sec: None,
                 accessible: false,
+                minimized_trimmed: false,
             };
 
             if let Some(h) = open_for_query(entry.th32ProcessID) {
-                if let Some((ws, commit)) = memory_counters(h.0) {
+                let memory = memory_counters(h.0);
+                if let Some((ws, commit, _)) = memory {
                     info.working_set = ws;
                     info.commit = commit;
                     info.accessible = true;
                 }
                 info.handles = handle_count_of(h.0).unwrap_or(0);
-                if let Some(t) = cpu_time_of(h.0) {
-                    cpu_times.push((info.pid, t));
+                if let Some((created, cpu_ticks)) = process_times_of(h.0) {
+                    counters.push(RawCounters {
+                        pid: info.pid,
+                        created,
+                        cpu_ticks,
+                        page_faults: memory.map(|(_, _, faults)| faults),
+                    });
                 }
             }
 
@@ -206,7 +232,7 @@ mod imp {
             }
         }
 
-        Ok((out, cpu_times))
+        Ok((out, counters))
     }
 
     /// Plain enumeration, for callers that do not need CPU (the cleaner).
@@ -241,14 +267,14 @@ pub fn terminate(_pid: u32) -> Result<(), String> {
     Err("Only available on Windows".into())
 }
 
-/// Turns successive enumerations into CPU percentages.
+/// Turns successive enumerations into CPU and page-fault rates.
 ///
 /// CPU usage is a rate, so it does not exist until there are two readings to
 /// difference. The first sample therefore reports `None` rather than 0, which
 /// would be a claim the data does not support.
 #[cfg(windows)]
 pub struct Sampler {
-    previous: std::collections::HashMap<u32, u64>,
+    previous: std::collections::HashMap<u32, imp::RawCounters>,
     last_at: Option<std::time::Instant>,
     processors: u32,
 }
@@ -264,31 +290,50 @@ impl Sampler {
     }
 
     pub fn sample(&mut self) -> Result<Vec<ProcessInfo>, String> {
-        let (mut processes, times) = imp::enumerate_with_cpu()?;
+        let (mut processes, counters) = imp::enumerate_with_cpu()?;
         let now = std::time::Instant::now();
 
         if let Some(previous_at) = self.last_at {
             // 100ns ticks per wall-clock nanosecond, times the number of cores,
             // is the total CPU time the machine could have spent in the gap.
             let elapsed_ns = now.duration_since(previous_at).as_nanos() as f64;
+            let elapsed_secs = now.duration_since(previous_at).as_secs_f64();
             let capacity_ticks = (elapsed_ns / 100.0) * self.processors as f64;
 
-            if capacity_ticks > 0.0 {
-                let current: std::collections::HashMap<u32, u64> = times.iter().copied().collect();
+            if capacity_ticks > 0.0 && elapsed_secs > 0.0 {
+                let current: std::collections::HashMap<u32, imp::RawCounters> = counters
+                    .iter()
+                    .copied()
+                    .map(|sample| (sample.pid, sample))
+                    .collect();
                 for p in &mut processes {
-                    // A pid absent from the previous pass is newly started; it
-                    // gets no percentage until the next sample.
-                    if let (Some(&now_t), Some(&then_t)) =
-                        (current.get(&p.pid), self.previous.get(&p.pid))
+                    let Some((now_c, then_c)) = current
+                        .get(&p.pid)
+                        .zip(self.previous.get(&p.pid))
+                        .filter(|(now_c, then_c)| now_c.created == then_c.created)
+                    else {
+                        continue;
+                    };
+
+                    let used = now_c.cpu_ticks.saturating_sub(then_c.cpu_ticks) as f64;
+                    p.cpu_percent = Some((used / capacity_ticks * 100.0).clamp(0.0, 100.0));
+
+                    if let (Some(now_faults), Some(then_faults)) =
+                        (now_c.page_faults, then_c.page_faults)
                     {
-                        let used = now_t.saturating_sub(then_t) as f64;
-                        p.cpu_percent = Some((used / capacity_ticks * 100.0).clamp(0.0, 100.0));
+                        // This 32-bit Windows counter wraps during long
+                        // uptimes; wrapping subtraction preserves the rate.
+                        p.page_faults_per_sec =
+                            Some(now_faults.wrapping_sub(then_faults) as f64 / elapsed_secs);
                     }
                 }
             }
         }
 
-        self.previous = times.into_iter().collect();
+        self.previous = counters
+            .into_iter()
+            .map(|sample| (sample.pid, sample))
+            .collect();
         self.last_at = Some(now);
         Ok(processes)
     }
@@ -349,6 +394,7 @@ mod tests {
             first.iter().all(|p| p.cpu_percent.is_none()),
             "no process can have a rate before a second reading"
         );
+        assert!(first.iter().all(|p| p.page_faults_per_sec.is_none()));
     }
 
     #[test]
@@ -360,6 +406,12 @@ mod tests {
         let spin = std::time::Instant::now();
         while spin.elapsed() < std::time::Duration::from_millis(120) {
             acc = acc.wrapping_add(spin.elapsed().as_nanos() as u64);
+        }
+        // Commit and touch fresh pages so this process has a measurable page
+        // fault delta as well as CPU activity.
+        let mut allocation = vec![0u8; 16 * 1024 * 1024];
+        for byte in allocation.iter_mut().step_by(4096) {
+            *byte = 1;
         }
         assert!(acc > 0);
 
@@ -379,5 +431,10 @@ mod tests {
             me.cpu_percent.unwrap_or(0.0) > 0.0,
             "the spinning test process should show CPU usage"
         );
+        assert!(
+            me.page_faults_per_sec.unwrap_or(0.0) > 0.0,
+            "touching fresh pages should produce page faults"
+        );
+        assert_eq!(allocation[0], 1);
     }
 }

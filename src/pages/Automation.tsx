@@ -27,6 +27,7 @@ function describeTrigger(t: Trigger): string {
 export function AutomationPage({ state }: { state: SettingsState }) {
   const { settings, error, update } = state;
   const [suspended, setSuspended] = useState<string[]>([]);
+  const [minimizeMonitorAvailable, setMinimizeMonitorAvailable] = useState<boolean | null>(null);
 
   const refreshSuspended = useCallback(() => {
     invoke<string[]>("suspended_rules")
@@ -40,6 +41,12 @@ export function AutomationPage({ state }: { state: SettingsState }) {
     return () => clearInterval(id);
   }, [refreshSuspended]);
 
+  useEffect(() => {
+    invoke<boolean>("minimize_monitor_available")
+      .then(setMinimizeMonitorAvailable)
+      .catch(() => setMinimizeMonitorAvailable(false));
+  }, []);
+
   if (!settings) {
     return (
       <div className="max-w-[720px]">
@@ -50,10 +57,14 @@ export function AutomationPage({ state }: { state: SettingsState }) {
   }
 
   const a = settings.automation;
+  const m = settings.minimizeTrim;
   const profile = a.profiles.find((p) => p.name === a.activeProfile) ?? a.profiles[0];
 
   const patchAutomation = (patch: Partial<Settings["automation"]>) =>
     update({ automation: { ...a, ...patch } });
+
+  const patchMinimizeTrim = (patch: Partial<Settings["minimizeTrim"]>) =>
+    update({ minimizeTrim: { ...m, ...patch } });
 
   const patchRule = (id: string, patch: Partial<AutomationRule>) =>
     patchAutomation({
@@ -95,6 +106,15 @@ export function AutomationPage({ state }: { state: SettingsState }) {
           message="Trimming moves pages to the standby list rather than freeing them, so the gain fades as programs resume. A rule that fires whenever memory is high can loop: trim, fade, trim again. Memora enforces a cooldown and switches off any rule that keeps recovering little, but the safest setting is still off."
         />
       </div>
+
+      {!a.enabled && (
+        <div className="mb-4">
+          <InfoBar
+            title="Automatic cleaning is currently off"
+            message="Turn on Run optimizations automatically below. In the Balanced profile, sustained usage above 85% will then run the safe working-set trim after 60 seconds."
+          />
+        </div>
+      )}
 
       <SettingsSection>
         <SettingsRow
@@ -234,6 +254,114 @@ export function AutomationPage({ state }: { state: SettingsState }) {
         Automatic runs appear on the Cleaner page while they happen and can be cancelled like any
         other. Every run, and every rule that matched but was held back, is recorded in History.
       </p>
+
+      <h3 className="mb-2 mt-6 text-[13px] font-semibold">Experimental: trim when minimized</h3>
+
+      <div className="mb-3">
+        <InfoBar
+          title="Use only for apps you understand"
+          message="Memora can reduce a selected app's working set after it stays minimized. This may lower its visible memory temporarily, but returning to the app can cause disk reads or a brief pause while Windows reloads pages. Restoring before the delay cancels the action."
+        />
+      </div>
+
+      {minimizeMonitorAvailable === false && (
+        <div className="mb-3">
+          <InfoBar
+            title="Minimize monitoring is unavailable in this session"
+            message="Memora could not register the Windows event listener. Other monitoring and cleaning features still work; restart Memora before enabling this experiment."
+          />
+        </div>
+      )}
+
+      <SettingsSection>
+        <SettingsRow
+          title="Trim selected applications when minimized"
+          description="Off by default. Add applications from the Processes page context menu."
+          control={
+            <ToggleSwitch
+              label="Trim selected applications when minimized"
+              checked={m.enabled}
+              disabled={minimizeMonitorAvailable === false}
+              onChange={(enabled) => patchMinimizeTrim({ enabled })}
+            />
+          }
+        />
+        <SettingsRow
+          title="Wait before trimming"
+          description="Restoring the application during this delay cancels the trim."
+          control={
+            <NumberBox
+              label="Wait before trimming"
+              value={m.delaySecs}
+              min={3}
+              max={60}
+              suffix="s"
+              onChange={(delaySecs) => patchMinimizeTrim({ delaySecs })}
+            />
+          }
+        />
+        <SettingsRow
+          title="Minimum working set"
+          description="Small applications are skipped because trimming them provides little benefit."
+          control={
+            <NumberBox
+              label="Minimum working set"
+              value={m.minimumWorkingSetMb}
+              min={50}
+              max={16384}
+              suffix="MB"
+              onChange={(minimumWorkingSetMb) => patchMinimizeTrim({ minimumWorkingSetMb })}
+            />
+          }
+        />
+        <SettingsRow
+          title="Per-application cooldown"
+          description="Prevents repeated minimize and restore cycles from constantly trimming the same app."
+          control={
+            <NumberBox
+              label="Per-application cooldown"
+              value={Math.round(m.cooldownSecs / 60)}
+              min={1}
+              max={60}
+              suffix="min"
+              onChange={(minutes) => patchMinimizeTrim({ cooldownSecs: minutes * 60 })}
+            />
+          }
+        />
+      </SettingsSection>
+
+      <h3 className="mb-2 mt-5 text-[13px] font-semibold">Selected applications</h3>
+      {m.applications.length === 0 ? (
+        <InfoBar
+          title="No applications selected"
+          message="Open Processes, right-click an application, and choose Trim when minimized."
+        />
+      ) : (
+        <SettingsSection>
+          {m.applications.map((name) => (
+            <SettingsRow
+              key={name}
+              title={name}
+              description={
+                settings.excludedProcesses.includes(name)
+                  ? "Skipped because this application is excluded from cleaning."
+                  : "Eligible after it remains minimized and passes the working-set threshold."
+              }
+              control={
+                <Button
+                  onClick={() =>
+                    patchMinimizeTrim({
+                      applications: m.applications.filter((item) => item !== name),
+                    })
+                  }
+                >
+                  Remove
+                </Button>
+              }
+            />
+          ))}
+        </SettingsSection>
+      )}
     </div>
   );
 }

@@ -6,5 +6,6 @@ pub mod automation;
 pub mod clean;
 pub mod history;
 pub mod memory;
+pub mod minimize;
 pub mod process;
 pub mod settings;

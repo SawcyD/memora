@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { ContentDialog } from "@/components/ContentDialog";
 import { ContextMenu, type MenuAction } from "@/components/ContextMenu";
 import { SearchBox } from "@/components/SearchBox";
@@ -9,7 +10,14 @@ import type { ProcessInfo } from "@/system/types";
 
 type ColumnId = keyof Pick<
   ProcessInfo,
-  "name" | "pid" | "workingSet" | "commit" | "cpuPercent" | "threads" | "handles"
+  | "name"
+  | "pid"
+  | "workingSet"
+  | "commit"
+  | "cpuPercent"
+  | "pageFaultsPerSec"
+  | "threads"
+  | "handles"
 > | "status";
 
 interface Column {
@@ -18,6 +26,7 @@ interface Column {
   /** Numeric columns are right-aligned and sort descending first. */
   numeric: boolean;
   width: number;
+  help?: string;
 }
 
 const COLUMNS: Column[] = [
@@ -27,6 +36,13 @@ const COLUMNS: Column[] = [
   { id: "workingSet", label: "Memory", numeric: true, width: 100 },
   { id: "commit", label: "Commit", numeric: true, width: 100 },
   { id: "cpuPercent", label: "CPU", numeric: true, width: 64 },
+  {
+    id: "pageFaultsPerSec",
+    label: "Faults/s",
+    numeric: true,
+    width: 78,
+    help: "All page faults per second, including faults resolved from RAM. This is not a disk-I/O count.",
+  },
   { id: "threads", label: "Threads", numeric: true, width: 70 },
   { id: "handles", label: "Handles", numeric: true, width: 76 },
 ];
@@ -35,10 +51,14 @@ const REFRESH_MS = 2000;
 
 export function ProcessesPage({
   excludedNames,
+  minimizeTrimNames,
   onToggleExcluded,
+  onToggleMinimizeTrim,
 }: {
   excludedNames: string[];
+  minimizeTrimNames: string[];
   onToggleExcluded: (name: string) => void;
+  onToggleMinimizeTrim: (name: string) => void;
 }) {
   const [rows, setRows] = useState<ProcessInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +87,23 @@ export function ProcessesPage({
     refresh();
     const id = setInterval(refresh, REFRESH_MS);
     return () => clearInterval(id);
+  }, [refresh]);
+
+  useEffect(() => {
+    const sub = listen<{
+      process: string;
+      workingSetBefore: number;
+      workingSetAfter: number;
+    }>("minimize://trimmed", ({ payload }) => {
+      const reduced = Math.max(0, payload.workingSetBefore - payload.workingSetAfter);
+      setNotice(
+        `${payload.process} stayed minimized, so Memora reduced its working set by ${formatBytes(reduced)}. Windows will reload pages as needed.`,
+      );
+      refresh();
+    }).catch(() => () => {});
+    return () => {
+      sub.then((unlisten) => unlisten());
+    };
   }, [refresh]);
 
   const visible = useMemo(() => {
@@ -131,6 +168,13 @@ export function ProcessesPage({
             ? `Include ${target.name} in cleaning`
             : `Exclude ${target.name} from cleaning`,
         },
+        {
+          id: "minimize-trim",
+          label: minimizeTrimNames.includes(target.name.toLowerCase())
+            ? `Stop trimming ${target.name} when minimized`
+            : `Trim ${target.name} when minimized`,
+          disabled: !target.accessible,
+        },
         { id: "copy", label: "Copy details" },
         { id: "end", label: "End task", danger: true, disabled: !target.accessible },
       ]
@@ -153,6 +197,14 @@ export function ProcessesPage({
       case "exclude":
         onToggleExcluded(target.name);
         break;
+      case "minimize-trim":
+        onToggleMinimizeTrim(target.name);
+        setNotice(
+          minimizeTrimNames.includes(target.name.toLowerCase())
+            ? `${target.name} was removed from minimize-to-trim.`
+            : `${target.name} was added. Turn on the experimental feature under Automation to activate it.`,
+        );
+        break;
       case "copy":
         await navigator.clipboard
           .writeText(
@@ -161,6 +213,7 @@ export function ProcessesPage({
               `PID: ${target.pid}`,
               `Memory: ${formatBytes(target.workingSet)}`,
               `Commit: ${formatBytes(target.commit)}`,
+              `Page faults: ${target.pageFaultsPerSec === null ? "Not measured" : `${target.pageFaultsPerSec.toFixed(1)}/s`}`,
               `Threads: ${target.threads}`,
               `Handles: ${target.handles}`,
             ].join("\n"),
@@ -218,6 +271,7 @@ export function ProcessesPage({
                       "text-[var(--text-secondary)] hover:bg-[var(--subtle-hover)]",
                       c.numeric ? "justify-end" : "justify-start",
                     ].join(" ")}
+                    title={c.help}
                   >
                     {c.label}
                     {sort.col === c.id && (
@@ -235,6 +289,7 @@ export function ProcessesPage({
             {visible.map((p, i) => {
               const isSelected = selected.has(p.pid);
               const isExcluded = excludedNames.includes(p.name.toLowerCase());
+              const hasMinimizeRule = minimizeTrimNames.includes(p.name.toLowerCase());
               return (
                 <tr
                   key={p.pid}
@@ -262,6 +317,11 @@ export function ProcessesPage({
                         Excluded
                       </span>
                     )}
+                    {hasMinimizeRule && (
+                      <span className="ml-1.5 text-[10px] text-[var(--text-tertiary)]">
+                        Minimize rule
+                      </span>
+                    )}
                   </td>
                   <td className="tabular px-2 py-1 text-right text-[var(--text-secondary)]">
                     {p.pid}
@@ -269,7 +329,7 @@ export function ProcessesPage({
                   <td className="px-2 py-1 text-[var(--text-secondary)]">
                     {/* Marked, not hidden: protected processes are a normal
                         state, not an error. */}
-                    {p.accessible ? "Running" : "Protected"}
+                    {p.minimizedTrimmed ? "Trimmed" : p.accessible ? "Running" : "Protected"}
                   </td>
                   <td className="tabular px-2 py-1 text-right">
                     {p.accessible ? formatBytes(p.workingSet) : "—"}
@@ -279,6 +339,16 @@ export function ProcessesPage({
                   </td>
                   <td className="tabular px-2 py-1 text-right">
                     {p.cpuPercent === null ? "—" : `${p.cpuPercent.toFixed(1)}%`}
+                  </td>
+                  <td
+                    className="tabular px-2 py-1 text-right"
+                    title="Includes soft faults resolved from RAM and hard faults requiring storage."
+                  >
+                    {p.pageFaultsPerSec === null
+                      ? "—"
+                      : p.pageFaultsPerSec < 10
+                        ? p.pageFaultsPerSec.toFixed(1)
+                        : Math.round(p.pageFaultsPerSec).toLocaleString()}
                   </td>
                   <td className="tabular px-2 py-1 text-right">{p.threads}</td>
                   <td className="tabular px-2 py-1 text-right">

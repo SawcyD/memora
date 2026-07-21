@@ -12,6 +12,20 @@ dist
 dist-ssr
 *.local
 
+# Keep the reusable UI package installable when copied directly. Its compiled
+# distribution is intentional; only the disposable showcase build is ignored.
+!packages/memora-ui/dist/
+!packages/memora-ui/dist/**
+packages/memora-ui/demo-dist/
+src-tauri/tauri.release.generated.conf.json
+
+# npm pack output — regenerate with `npm run ui:pack`, never commit
+/*.tgz
+
+# keys
+*.key
+*.pem
+
 # Scratch output (icon generation intermediates, etc.)
 tmp
 

@@ -22,7 +22,13 @@ pub enum Source {
     Manual,
     /// A tray click action.
     Tray,
-    Automation { rule: String },
+    Automation {
+        rule: String,
+    },
+    /// One selected application was trimmed after remaining minimized.
+    Minimize {
+        process: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,10 +36,14 @@ pub enum Source {
 pub enum RunOutcome {
     Completed,
     Cancelled,
-    Failed { error: String },
+    Failed {
+        error: String,
+    },
     /// A rule matched but a gate stopped it. Recorded so a user whose
     /// automation never fires can find out why.
-    Blocked { gate: String },
+    Blocked {
+        gate: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +67,10 @@ pub struct Record {
     pub errors: u32,
     pub duration_ms: u64,
     pub unavailable: Vec<String>,
+    /// Per-process telemetry for minimize rules. `None` for full clean runs.
+    pub target_pid: Option<u32>,
+    pub working_set_before: Option<u64>,
+    pub working_set_after: Option<u64>,
 }
 
 impl Default for Record {
@@ -74,6 +88,9 @@ impl Default for Record {
             errors: 0,
             duration_ms: 0,
             unavailable: Vec::new(),
+            target_pid: None,
+            working_set_before: None,
+            working_set_after: None,
         }
     }
 }
@@ -97,6 +114,34 @@ impl Record {
             errors: report.errors,
             duration_ms: report.duration_ms,
             unavailable: report.unavailable.clone(),
+            target_pid: None,
+            working_set_before: None,
+            working_set_after: None,
+        }
+    }
+
+    pub fn from_minimize(
+        process: String,
+        pid: u32,
+        working_set_before: u64,
+        result: Result<u64, String>,
+        duration_ms: u64,
+    ) -> Self {
+        let (outcome, working_set_after, processes_trimmed, errors) = match result {
+            Ok(after) => (RunOutcome::Completed, Some(after), 1, 0),
+            Err(error) => (RunOutcome::Failed { error }, None, 0, 1),
+        };
+        Self {
+            at: now_ms(),
+            source: Source::Minimize { process },
+            outcome,
+            duration_ms,
+            target_pid: Some(pid),
+            working_set_before: Some(working_set_before),
+            working_set_after,
+            processes_trimmed,
+            errors,
+            ..Default::default()
         }
     }
 }
@@ -328,7 +373,10 @@ mod tests {
         store.set_settled(store.list()[0].at, 5).unwrap();
 
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("not json at all"), "evidence must survive a rewrite");
+        assert!(
+            text.contains("not json at all"),
+            "evidence must survive a rewrite"
+        );
     }
 
     #[test]
@@ -373,5 +421,20 @@ mod tests {
         assert!(store.list().is_empty());
         // Clearing twice is not an error.
         store.clear().unwrap();
+    }
+
+    #[test]
+    fn minimize_record_keeps_process_telemetry() {
+        let r = Record::from_minimize("editor.exe".into(), 42, 500, Ok(125), 9);
+        assert_eq!(
+            r.source,
+            Source::Minimize {
+                process: "editor.exe".into()
+            }
+        );
+        assert_eq!(r.target_pid, Some(42));
+        assert_eq!(r.working_set_before, Some(500));
+        assert_eq!(r.working_set_after, Some(125));
+        assert_eq!(r.processes_trimmed, 1);
     }
 }

@@ -198,11 +198,12 @@ pub fn update<R: Runtime>(app: &AppHandle<R>, snap: &MemorySnapshot, settings: &
         settings.critical_threshold,
     );
 
-    let rgba = state
-        .cache
-        .lock()
-        .unwrap()
-        .get(pct, usage, state.accent, settings.show_tray_percentage);
+    let rgba =
+        state
+            .cache
+            .lock()
+            .unwrap()
+            .get(pct, usage, state.accent, settings.show_tray_percentage);
     let _ = tray.set_icon(Some(Image::new_owned(rgba, icon::SIZE, icon::SIZE)));
 
     let gb = |b: u64| b as f64 / 1024f64.powi(3);

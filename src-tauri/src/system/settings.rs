@@ -16,6 +16,54 @@ pub enum ClickAction {
     Optimize,
 }
 
+/// Experimental, opt-in working-set trimming for selected applications.
+/// Applications are stored by executable name because process ids are reused.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MinimizeTrimConfig {
+    pub enabled: bool,
+    pub delay_secs: u64,
+    pub minimum_working_set_mb: u64,
+    pub cooldown_secs: u64,
+    pub applications: Vec<String>,
+}
+
+impl Default for MinimizeTrimConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            // A short grace period avoids trimming an app that was minimized
+            // only to switch windows for a moment.
+            delay_secs: 8,
+            minimum_working_set_mb: 150,
+            cooldown_secs: 600,
+            applications: Vec::new(),
+        }
+    }
+}
+
+impl MinimizeTrimConfig {
+    fn sanitized(mut self) -> Self {
+        self.delay_secs = self.delay_secs.clamp(3, 60);
+        self.minimum_working_set_mb = self.minimum_working_set_mb.clamp(50, 16_384);
+        self.cooldown_secs = self.cooldown_secs.clamp(60, 3_600);
+        for name in &mut self.applications {
+            *name = name.trim().to_ascii_lowercase();
+        }
+        self.applications.retain(|n| !n.is_empty());
+        self.applications.sort();
+        self.applications.dedup();
+        self
+    }
+
+    pub fn includes(&self, process_name: &str) -> bool {
+        let key = process_name.to_ascii_lowercase();
+        self.applications
+            .binary_search_by(|name| name.as_str().cmp(&key))
+            .is_ok()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -45,6 +93,9 @@ pub struct Settings {
     /// the one the user chose.
     pub excluded_processes: Vec<String>,
 
+    /// Per-application minimize-to-trim. Experimental and disabled by default.
+    pub minimize_trim: MinimizeTrimConfig,
+
     /// Automatic cleaning. Disabled by default; see system::automation.
     pub automation: super::automation::Config,
 }
@@ -67,6 +118,7 @@ impl Default for Settings {
             start_with_windows: false,
             show_optimization_notifications: true,
             excluded_processes: Vec::new(),
+            minimize_trim: MinimizeTrimConfig::default(),
             automation: super::automation::Config::default(),
         }
     }
@@ -82,6 +134,8 @@ impl Settings {
         self.excluded_processes.retain(|n| !n.is_empty());
         self.excluded_processes.sort();
         self.excluded_processes.dedup();
+
+        self.minimize_trim = self.minimize_trim.sanitized();
 
         self.automation = self.automation.clone().sanitized();
         self.tray_interval_secs = self.tray_interval_secs.clamp(1, 30);
@@ -126,8 +180,7 @@ impl Store {
             std::fs::create_dir_all(dir).map_err(|e| format!("Could not create {dir:?}: {e}"))?;
         }
         let json = serde_json::to_string_pretty(&next).map_err(|e| e.to_string())?;
-        std::fs::write(&self.path, json)
-            .map_err(|e| format!("Could not save settings: {e}"))?;
+        std::fs::write(&self.path, json).map_err(|e| format!("Could not save settings: {e}"))?;
 
         Ok(next)
     }
@@ -140,12 +193,12 @@ impl Store {
 pub fn set_start_with_windows(enabled: bool) -> Result<(), String> {
     use windows::core::{w, PCWSTR};
     use windows::Win32::System::Registry::{
-        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY,
-        HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ,
+        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
+        KEY_SET_VALUE, REG_SZ,
     };
 
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("Cannot locate the Memora executable: {e}"))?;
+    let exe =
+        std::env::current_exe().map_err(|e| format!("Cannot locate the Memora executable: {e}"))?;
     let command: Vec<u16> = format!("\"{}\"", exe.display())
         .encode_utf16()
         .chain(std::iter::once(0))
@@ -165,10 +218,8 @@ pub fn set_start_with_windows(enabled: bool) -> Result<(), String> {
         .map_err(|e| format!("Cannot open the startup key: {e}"))?;
 
         let result = if enabled {
-            let bytes = std::slice::from_raw_parts(
-                command.as_ptr() as *const u8,
-                command.len() * 2,
-            );
+            let bytes =
+                std::slice::from_raw_parts(command.as_ptr() as *const u8, command.len() * 2);
             RegSetValueExW(key, w!("Memora"), None, REG_SZ, Some(bytes))
                 .ok()
                 .map_err(|e| format!("Cannot register startup entry: {e}"))
@@ -231,7 +282,31 @@ mod tests {
         // A file written by an older build without the newer keys.
         let partial: Settings = serde_json::from_str(r#"{"showTrayPercentage": false}"#).unwrap();
         assert!(!partial.show_tray_percentage);
-        assert_eq!(partial.tray_interval_secs, Settings::default().tray_interval_secs);
+        assert_eq!(
+            partial.tray_interval_secs,
+            Settings::default().tray_interval_secs
+        );
+    }
+
+    #[test]
+    fn minimize_rules_are_normalized_and_clamped() {
+        let s = Settings {
+            minimize_trim: MinimizeTrimConfig {
+                delay_secs: 0,
+                minimum_working_set_mb: 1,
+                cooldown_secs: 1,
+                applications: vec![" Foo.EXE ".into(), "foo.exe".into(), "".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .sanitized();
+
+        assert_eq!(s.minimize_trim.delay_secs, 3);
+        assert_eq!(s.minimize_trim.minimum_working_set_mb, 50);
+        assert_eq!(s.minimize_trim.cooldown_secs, 60);
+        assert_eq!(s.minimize_trim.applications, vec!["foo.exe"]);
+        assert!(s.minimize_trim.includes("FOO.exe"));
     }
 
     #[test]

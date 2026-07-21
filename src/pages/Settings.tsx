@@ -83,11 +83,11 @@ export function SettingsPage({ state }: { state: SettingsState }) {
         />
       </SettingsSection>
 
-      <h3 className="mb-2 mt-5 text-[13px] font-semibold">Usage thresholds</h3>
+      <h3 className="mb-2 mt-5 text-[13px] font-semibold">Tray usage states</h3>
       <SettingsSection>
         <SettingsRow
           title="Elevated"
-          description="Above this, usage is considered elevated."
+          description="Controls the tray meter state only. Automatic cleaning thresholds are configured on the Automation page."
           control={
             <NumberBox
               label="Elevated threshold"

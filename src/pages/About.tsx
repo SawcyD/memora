@@ -12,7 +12,7 @@ export function AboutPage({ elevated }: { elevated: boolean }) {
 
       <SettingsSection>
         <div className="px-4 py-3">
-          <InfoRow label="Version" value="0.1.0" />
+          <InfoRow label="Version" value="0.5.0" />
           <InfoRow label="Running as administrator" value={elevated ? "Yes" : "No"} />
         </div>
       </SettingsSection>
@@ -20,7 +20,8 @@ export function AboutPage({ elevated }: { elevated: boolean }) {
       <h3 className="mb-2 mt-5 text-[13px] font-semibold">What Memora does</h3>
       <p className="text-[13px] leading-5 text-[var(--text-secondary)]">
         Memora reports physical memory using the same Windows counters Task Manager reads, and can
-        ask Windows to trim process working sets.
+        distinguish ordinary page faults from disk-backed paging, and ask Windows to trim process
+        working sets.
       </p>
 
       <h3 className="mb-2 mt-4 text-[13px] font-semibold">What trimming actually does</h3>

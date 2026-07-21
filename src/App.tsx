@@ -35,6 +35,7 @@ export default function App() {
   // Exclusions live in settings as process names, so they survive restarts and
   // keep protecting the same program when its pid changes.
   const excludedNames = settings.settings?.excludedProcesses ?? [];
+  const minimizeTrimNames = settings.settings?.minimizeTrim.applications ?? [];
 
   useEffect(() => {
     const onResize = () => setCompact(window.innerWidth < COMPACT_BREAKPOINT);
@@ -57,7 +58,7 @@ export default function App() {
     return () => {
       subs.forEach((p) => p.then((f) => f()));
     };
-  }, [clean]);
+  }, [clean.start]);
 
   // A narrow window forces the rail; above the breakpoint the user's choice wins.
   const collapsed = compact || userCollapsed;
@@ -90,7 +91,14 @@ export default function App() {
           ].join(" ")}
         >
           {page === "home" ? (
-            <HomePage memory={memory} onOptimize={() => setPage("cleaner")} />
+            <HomePage
+              memory={memory}
+              onOptimize={() => {
+                // The Home command is an action, not a link to another button.
+                setPage("cleaner");
+                clean.start(["trimWorkingSets"]);
+              }}
+            />
           ) : page === "memory" ? (
             <MemoryPage memory={memory} />
           ) : page === "cleaner" ? (
@@ -98,12 +106,25 @@ export default function App() {
           ) : page === "processes" ? (
             <ProcessesPage
               excludedNames={excludedNames}
+              minimizeTrimNames={minimizeTrimNames}
               onToggleExcluded={(name) => {
                 const key = name.toLowerCase();
                 settings.update({
                   excludedProcesses: excludedNames.includes(key)
                     ? excludedNames.filter((n) => n !== key)
                     : [...excludedNames, key],
+                });
+              }}
+              onToggleMinimizeTrim={(name) => {
+                if (!settings.settings) return;
+                const key = name.toLowerCase();
+                settings.update({
+                  minimizeTrim: {
+                    ...settings.settings.minimizeTrim,
+                    applications: minimizeTrimNames.includes(key)
+                      ? minimizeTrimNames.filter((n) => n !== key)
+                      : [...minimizeTrimNames, key],
+                  },
                 });
               }}
             />

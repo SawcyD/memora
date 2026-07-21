@@ -23,10 +23,26 @@ export function Button({
 }
 
 /** A label/value pair in the compact two-column layout Task Manager uses. */
-export function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+export function InfoRow({
+  label,
+  value,
+  help,
+}: {
+  label: string;
+  value: React.ReactNode;
+  help?: string;
+}) {
   return (
     <div className="flex items-baseline justify-between gap-4 py-[3px]">
-      <span className="text-[13px] text-[var(--text-secondary)]">{label}</span>
+      <span
+        className={[
+          "text-[13px] text-[var(--text-secondary)]",
+          help ? "cursor-help decoration-dotted underline-offset-2 hover:underline" : "",
+        ].join(" ")}
+        title={help}
+      >
+        {label}
+      </span>
       <span className="tabular text-[13px] text-[var(--text-primary)]">{value}</span>
     </div>
   );

@@ -6,6 +6,29 @@ Memora must look and behave like a real Windows 11 system utility. The interface
 
 The application should appear as though Microsoft designed it alongside Task Manager, Windows Security, Settings, and PowerToys.
 
+## Versioning and Release Discipline
+
+Use Semantic Versioning (`MAJOR.MINOR.PATCH`) and update the version as part of every change that affects shipped code, UI, behavior, assets, dependencies, or packaging. Choose the bump from the largest change included:
+
+- **PATCH** (`0.1.0` → `0.1.1`) for small, backwards-compatible changes such as bug fixes, visual polish, performance improvements, dependency maintenance, and internal refactors.
+- **MINOR** (`0.1.0` → `0.2.0`) for substantial backwards-compatible additions such as a new feature, page, cleaning method, automation capability, or meaningful workflow change.
+- **MAJOR** (`0.1.0` → `1.0.0`, then `1.x` → `2.0.0`) for huge or breaking changes such as a major redesign, incompatible settings/history formats, removed capabilities, or fundamental architectural changes.
+
+Documentation-only, test-only, and comment-only changes do not require a version bump unless they accompany a shipped change. Do not bump more than once for one coherent change set.
+
+Keep the version synchronized in all of these locations:
+
+```text
+package.json
+package-lock.json
+src-tauri/Cargo.toml
+src-tauri/Cargo.lock
+src-tauri/tauri.conf.json
+src/pages/About.tsx
+```
+
+Before producing an installer, verify every location reports the same version. Never overwrite or redistribute a release artifact under an unchanged version number when its shipped contents have changed.
+
 ## Native Windows 11 Design Requirements
 
 Follow Microsoft's Windows 11 Fluent design language closely. Use:

@@ -23,6 +23,13 @@ pub struct MemorySnapshot {
     pub kernel_paged: u64,
     pub kernel_nonpaged: u64,
 
+    /// Cumulative system counters since boot. They are optional because the
+    /// native performance structure is not a stable public Win32 contract.
+    /// The frontend differences successive values into rates.
+    pub page_fault_count: Option<u32>,
+    pub page_read_count: Option<u32>,
+    pub page_read_io_count: Option<u32>,
+
     pub page_size: u64,
     /// Milliseconds since the Unix epoch, for graph plotting on the frontend.
     pub timestamp_ms: u64,
@@ -76,7 +83,8 @@ pub fn snapshot() -> Result<MemorySnapshot, String> {
     // SAFETY: both structs are zeroed, correctly sized, and their size field is
     // set as the API requires. Neither call retains the pointer.
     unsafe {
-        GlobalMemoryStatusEx(&mut status).map_err(|e| format!("GlobalMemoryStatusEx failed: {e}"))?;
+        GlobalMemoryStatusEx(&mut status)
+            .map_err(|e| format!("GlobalMemoryStatusEx failed: {e}"))?;
         GetPerformanceInfo(&mut perf, perf.cb)
             .map_err(|e| format!("GetPerformanceInfo failed: {e}"))?;
     }
@@ -86,6 +94,7 @@ pub fn snapshot() -> Result<MemorySnapshot, String> {
 
     let physical_total = status.ullTotalPhys;
     let physical_available = status.ullAvailPhys;
+    let paging = paging_counters();
 
     Ok(MemorySnapshot {
         physical_total,
@@ -101,8 +110,68 @@ pub fn snapshot() -> Result<MemorySnapshot, String> {
         system_cache: pages(perf.SystemCache),
         kernel_paged: pages(perf.KernelPaged),
         kernel_nonpaged: pages(perf.KernelNonpaged),
+        page_fault_count: paging.map(|p| p.page_fault_count),
+        page_read_count: paging.map(|p| p.page_read_count),
+        page_read_io_count: paging.map(|p| p.page_read_io_count),
         page_size: page,
         timestamp_ms: now_ms(),
+    })
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy)]
+struct PagingCounters {
+    page_fault_count: u32,
+    page_read_count: u32,
+    page_read_io_count: u32,
+}
+
+/// Reads the cumulative counters behind Windows' Memory performance object.
+///
+/// `SYSTEM_PERFORMANCE_INFORMATION` is intentionally opaque in the Windows
+/// SDK. Its stable leading layout is used by Windows' own performance tooling;
+/// a generously sized byte buffer tolerates fields added to the tail. Failure
+/// is non-fatal and becomes `None` in the public snapshot.
+#[cfg(windows)]
+fn paging_counters() -> Option<PagingCounters> {
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtQuerySystemInformation(
+            class: i32,
+            info: *mut std::ffi::c_void,
+            len: u32,
+            return_len: *mut u32,
+        ) -> i32;
+    }
+
+    const SYSTEM_PERFORMANCE_INFORMATION_CLASS: i32 = 2;
+    const PAGE_FAULT_COUNT_OFFSET: usize = 60;
+    const PAGE_READ_COUNT_OFFSET: usize = 80;
+    const PAGE_READ_IO_COUNT_OFFSET: usize = 84;
+
+    let mut buffer = [0u8; 512];
+    let mut returned = 0u32;
+    // SAFETY: the kernel receives a valid writable buffer and its exact size.
+    // We only read fixed leading fields after a successful result.
+    let status = unsafe {
+        NtQuerySystemInformation(
+            SYSTEM_PERFORMANCE_INFORMATION_CLASS,
+            buffer.as_mut_ptr() as *mut std::ffi::c_void,
+            buffer.len() as u32,
+            &mut returned,
+        )
+    };
+    if status < 0 || (returned != 0 && returned < (PAGE_READ_IO_COUNT_OFFSET + 4) as u32) {
+        return None;
+    }
+
+    let read = |offset: usize| {
+        u32::from_ne_bytes(buffer[offset..offset + 4].try_into().expect("fixed offset"))
+    };
+    Some(PagingCounters {
+        page_fault_count: read(PAGE_FAULT_COUNT_OFFSET),
+        page_read_count: read(PAGE_READ_COUNT_OFFSET),
+        page_read_io_count: read(PAGE_READ_IO_COUNT_OFFSET),
     })
 }
 
@@ -181,9 +250,7 @@ mod detail_imp {
             .ok()?
             .into_iter()
             .find(|p| p.name.eq_ignore_ascii_case("MemCompression"))
-            .and_then(|p| {
-                process::open_for_query(p.pid).and_then(|h| process::working_set_of(h.0))
-            })
+            .and_then(|p| process::open_for_query(p.pid).and_then(|h| process::working_set_of(h.0)))
     }
 }
 
@@ -231,6 +298,12 @@ mod tests {
         assert!((0.0..=100.0).contains(&s.percent_in_use));
         assert!(s.commit_limit >= s.commit_total);
         assert_eq!(s.page_size, 4096, "x64 Windows uses 4 KiB pages");
+        assert!(
+            s.page_fault_count.is_some(),
+            "paging counters should be readable"
+        );
+        assert!(s.page_read_count.is_some());
+        assert!(s.page_read_io_count.is_some());
         println!(
             "total={} in_use={} ({:.1}%) commit={}/{} cache={}",
             s.physical_total,
@@ -269,10 +342,16 @@ mod tests {
         );
 
         if let Some(installed) = d.physical_installed {
-            assert!(installed >= snap.physical_total, "installed must cover usable");
+            assert!(
+                installed >= snap.physical_total,
+                "installed must cover usable"
+            );
             let reserved = d.hardware_reserved.unwrap();
             assert_eq!(reserved, installed - snap.physical_total);
-            assert!(reserved < 2 * 1024 * 1024 * 1024, "reserved looks implausible");
+            assert!(
+                reserved < 2 * 1024 * 1024 * 1024,
+                "reserved looks implausible"
+            );
         }
 
         println!(

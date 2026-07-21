@@ -29,12 +29,40 @@ fn system_accent() -> Accent {
 #[derive(Default)]
 struct ProcessSampler(Mutex<Option<system::process::Sampler>>);
 
+/// Processes trimmed by a minimize rule and not yet restored. The executable
+/// name guards against stale pids being reused by Windows.
+#[derive(Default)]
+struct MinimizeTrimState(Mutex<std::collections::HashMap<u32, String>>);
+
+#[derive(Default)]
+struct MinimizeMonitorStatus(AtomicBool);
+
+#[tauri::command]
+fn minimize_monitor_available(state: tauri::State<'_, MinimizeMonitorStatus>) -> bool {
+    state.0.load(Ordering::Relaxed)
+}
+
 #[tauri::command]
 fn list_processes(
     state: tauri::State<'_, ProcessSampler>,
+    minimize_state: tauri::State<'_, MinimizeTrimState>,
 ) -> Result<Vec<system::process::ProcessInfo>, String> {
     let mut slot = state.0.lock().unwrap();
-    slot.get_or_insert_with(system::process::Sampler::new).sample()
+    let mut processes = slot
+        .get_or_insert_with(system::process::Sampler::new)
+        .sample()?;
+    let live: std::collections::HashMap<u32, String> = processes
+        .iter()
+        .map(|p| (p.pid, p.name.to_ascii_lowercase()))
+        .collect();
+    let mut trimmed = minimize_state.0.lock().unwrap();
+    trimmed.retain(|pid, name| live.get(pid).is_some_and(|live_name| live_name == name));
+    for process in &mut processes {
+        process.minimized_trimmed = trimmed
+            .get(&process.pid)
+            .is_some_and(|name| name == &process.name.to_ascii_lowercase());
+    }
+    Ok(processes)
 }
 
 /// Trims a single process, for the Processes page context menu.
@@ -85,9 +113,7 @@ fn update_settings(
 }
 
 #[tauri::command]
-fn list_history(
-    store: tauri::State<'_, system::history::Store>,
-) -> Vec<system::history::Record> {
+fn list_history(store: tauri::State<'_, system::history::Store>) -> Vec<system::history::Record> {
     store.list()
 }
 
@@ -121,11 +147,17 @@ fn result_notification(report: &system::clean::CleanReport) -> (&'static str, St
     };
 
     let change = if report.recovered >= 0 {
-        format!("Available memory rose {} immediately", short_bytes(report.recovered))
+        format!(
+            "Available memory rose {} immediately",
+            short_bytes(report.recovered)
+        )
     } else {
         // A negative delta is normal when the system allocated during the run;
         // reporting it as a gain would be a lie.
-        format!("Available memory fell {} during the run", short_bytes(report.recovered))
+        format!(
+            "Available memory fell {} during the run",
+            short_bytes(report.recovered)
+        )
     };
 
     let mut body = format!(
@@ -188,11 +220,74 @@ struct CleanTask(Mutex<Option<system::clean::Cancel>>);
 
 impl CleanTask {
     fn in_flight(&self) -> bool {
-        self.0
-            .lock()
-            .unwrap()
+        self.0.lock().unwrap().is_some()
+    }
+
+    /// Releases only the run that owns this flag. The identity check matters
+    /// if a cancelled worker finishes after a later run has already started.
+    fn finish(&self, completed: &system::clean::Cancel) {
+        let mut slot = self.0.lock().unwrap();
+        if slot
             .as_ref()
-            .is_some_and(|f| !f.load(Ordering::Relaxed))
+            .is_some_and(|current| Arc::ptr_eq(current, completed))
+        {
+            *slot = None;
+        }
+    }
+}
+
+/// Clears the single-flight slot even if the cleaning worker panics.
+struct CleanRunLease {
+    app: tauri::AppHandle,
+    flag: system::clean::Cancel,
+}
+
+impl Drop for CleanRunLease {
+    fn drop(&mut self) {
+        self.app.state::<CleanTask>().finish(&self.flag);
+    }
+}
+
+#[cfg(test)]
+mod clean_task_tests {
+    use super::*;
+
+    fn flag() -> system::clean::Cancel {
+        Arc::new(AtomicBool::new(false))
+    }
+
+    #[test]
+    fn finishing_a_run_releases_the_single_flight_slot() {
+        let task = CleanTask::default();
+        let active = flag();
+        *task.0.lock().unwrap() = Some(active.clone());
+
+        assert!(task.in_flight());
+        task.finish(&active);
+        assert!(!task.in_flight());
+    }
+
+    #[test]
+    fn cancellation_does_not_release_the_slot_before_the_worker_finishes() {
+        let task = CleanTask::default();
+        let active = flag();
+        *task.0.lock().unwrap() = Some(active.clone());
+
+        active.store(true, Ordering::Relaxed);
+        assert!(task.in_flight());
+        task.finish(&active);
+        assert!(!task.in_flight());
+    }
+
+    #[test]
+    fn stale_worker_cannot_clear_a_newer_run() {
+        let task = CleanTask::default();
+        let stale = flag();
+        let current = flag();
+        *task.0.lock().unwrap() = Some(current);
+
+        task.finish(&stale);
+        assert!(task.in_flight());
     }
 }
 
@@ -264,10 +359,13 @@ fn start_optimization_inner(
 ) -> Result<(), String> {
     // Persisted name-based exclusions always apply, on top of any pids the
     // caller passed for this run only.
-    let excluded_names = app.state::<system::settings::Store>().get().excluded_processes;
+    let excluded_names = app
+        .state::<system::settings::Store>()
+        .get()
+        .excluded_processes;
     let state = app.state::<CleanTask>();
     let mut slot = state.0.lock().unwrap();
-    if slot.as_ref().is_some_and(|f| !f.load(Ordering::Relaxed)) {
+    if slot.is_some() {
         return Err("An optimization is already running".into());
     }
 
@@ -276,10 +374,19 @@ fn start_optimization_inner(
     drop(slot);
 
     std::thread::spawn(move || {
+        // The lease fixes a deadlock where a completed run remained in the
+        // slot forever, blocking every later manual and automatic run.
+        let lease = CleanRunLease {
+            app: app.clone(),
+            flag: cancel.clone(),
+        };
         let progress_app = app.clone();
         let result = system::clean::run(&methods, &excluded, &excluded_names, cancel, move |p| {
             let _ = progress_app.emit("clean://progress", p);
         });
+        // A completed report must be actionable immediately; the separate
+        // 30-second settled measurement is not part of the active run.
+        drop(lease);
 
         match result {
             Ok(report) => {
@@ -304,7 +411,9 @@ fn start_optimization_inner(
                     if let Ok(later) = system::memory::snapshot() {
                         let settled = later.physical_available as i64 - available_before as i64;
                         let _ = app.emit("clean://settled", settled);
-                        let _ = app.state::<system::history::Store>().set_settled(at, settled);
+                        let _ = app
+                            .state::<system::history::Store>()
+                            .set_settled(at, settled);
 
                         // The effectiveness gate needs the settled figure: a
                         // rule that keeps recovering nothing suspends itself.
@@ -366,6 +475,148 @@ fn spawn_sampler(app: tauri::AppHandle) {
         // Fixed 1 Hz: the graph needs a steady series regardless of how often
         // the tray chooses to redraw.
         std::thread::sleep(Duration::from_secs(1));
+    });
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MinimizeTrimNotice {
+    process: String,
+    pid: u32,
+    working_set_before: u64,
+    working_set_after: u64,
+}
+
+/// Applies delayed minimize rules without doing work in the Windows callback.
+/// A restore event cancels the pending action, and the window state is checked
+/// again immediately before touching the process.
+fn spawn_minimize_worker(
+    app: tauri::AppHandle,
+    receiver: std::sync::mpsc::Receiver<system::minimize::Event>,
+) {
+    use std::collections::HashMap;
+    use std::sync::mpsc::RecvTimeoutError;
+    use std::time::Instant;
+    use system::minimize::EventKind;
+
+    #[derive(Clone, Copy)]
+    struct Pending {
+        pid: u32,
+        due: Instant,
+    }
+
+    std::thread::spawn(move || {
+        let mut pending: HashMap<isize, Pending> = HashMap::new();
+        let mut last_trimmed: HashMap<String, Instant> = HashMap::new();
+
+        loop {
+            let timeout = pending
+                .values()
+                .map(|p| p.due.saturating_duration_since(Instant::now()))
+                .min()
+                .unwrap_or(Duration::from_secs(60));
+
+            match receiver.recv_timeout(timeout) {
+                Ok(event) => match event.kind {
+                    EventKind::Minimized => {
+                        let delay = app
+                            .state::<system::settings::Store>()
+                            .get()
+                            .minimize_trim
+                            .delay_secs;
+                        pending.insert(
+                            event.hwnd,
+                            Pending {
+                                pid: event.pid,
+                                due: Instant::now() + Duration::from_secs(delay),
+                            },
+                        );
+                    }
+                    EventKind::Restored => {
+                        pending.remove(&event.hwnd);
+                        app.state::<MinimizeTrimState>()
+                            .0
+                            .lock()
+                            .unwrap()
+                            .remove(&event.pid);
+                    }
+                },
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+
+            let now = Instant::now();
+            let due: Vec<(isize, Pending)> = pending
+                .iter()
+                .filter(|(_, item)| item.due <= now)
+                .map(|(hwnd, item)| (*hwnd, *item))
+                .collect();
+
+            for (hwnd, item) in due {
+                pending.remove(&hwnd);
+                if !system::minimize::is_minimized(hwnd) || app.state::<CleanTask>().in_flight() {
+                    continue;
+                }
+
+                let settings = app.state::<system::settings::Store>().get();
+                let config = settings.minimize_trim;
+                if !config.enabled {
+                    continue;
+                }
+
+                let Ok(processes) = system::process::enumerate() else {
+                    continue;
+                };
+                let Some(process) = processes.into_iter().find(|p| p.pid == item.pid) else {
+                    continue;
+                };
+                let name = process.name.to_ascii_lowercase();
+                let minimum_bytes = config.minimum_working_set_mb * 1024 * 1024;
+                if !process.accessible
+                    || !config.includes(&name)
+                    || settings.excluded_processes.binary_search(&name).is_ok()
+                    || process.working_set < minimum_bytes
+                    || last_trimmed
+                        .get(&name)
+                        .is_some_and(|at| at.elapsed() < Duration::from_secs(config.cooldown_secs))
+                {
+                    continue;
+                }
+
+                let started = Instant::now();
+                let result = system::clean::trim_process(process.pid);
+                let record = system::history::Record::from_minimize(
+                    process.name.clone(),
+                    process.pid,
+                    process.working_set,
+                    result.clone(),
+                    started.elapsed().as_millis() as u64,
+                );
+                if let Err(e) = app.state::<system::history::Store>().append(&record) {
+                    eprintln!("[memora] minimize history append failed: {e}");
+                }
+
+                if let Ok(after) = result {
+                    last_trimmed.insert(name.clone(), Instant::now());
+                    if system::minimize::is_minimized(hwnd) {
+                        app.state::<MinimizeTrimState>()
+                            .0
+                            .lock()
+                            .unwrap()
+                            .insert(process.pid, name);
+                    }
+                    let _ = app.emit(
+                        "minimize://trimmed",
+                        MinimizeTrimNotice {
+                            process: process.name,
+                            pid: process.pid,
+                            working_set_before: process.working_set,
+                            working_set_after: after,
+                        },
+                    );
+                }
+            }
+        }
     });
 }
 
@@ -449,9 +700,12 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(CleanTask::default())
         .manage(ProcessSampler::default())
+        .manage(MinimizeTrimState::default())
+        .manage(MinimizeMonitorStatus::default())
         .invoke_handler(tauri::generate_handler![
             memory_snapshot,
             memory_detail,
@@ -466,6 +720,7 @@ pub fn run() {
             clear_history,
             resume_rule,
             suspended_rules,
+            minimize_monitor_available,
             start_optimization,
             cancel_optimization
         ])
@@ -478,9 +733,33 @@ pub fn run() {
                 .path()
                 .app_config_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
-            app.manage(system::settings::Store::load(config_dir.join("settings.json")));
-            app.manage(system::history::Store::new(config_dir.join("history.jsonl")));
+            app.manage(system::settings::Store::load(
+                config_dir.join("settings.json"),
+            ));
+            app.manage(system::history::Store::new(
+                config_dir.join("history.jsonl"),
+            ));
             app.manage(AutomationEngine::default());
+
+            // Register on the Tauri message-loop thread; the callback only
+            // enqueues tiny event records and the worker handles all policy.
+            #[cfg(windows)]
+            {
+                let (sender, receiver) = std::sync::mpsc::channel();
+                match system::minimize::install(sender) {
+                    Ok(()) => {
+                        app.state::<MinimizeMonitorStatus>()
+                            .0
+                            .store(true, Ordering::Relaxed);
+                        spawn_minimize_worker(app.handle().clone(), receiver);
+                    }
+                    Err(error) => {
+                        // This experimental feature must never prevent the
+                        // core monitor and manual cleaner from starting.
+                        eprintln!("[memora] minimize monitor unavailable: {error}");
+                    }
+                }
+            }
 
             // Mica is the main-surface backdrop per the design rules. It needs
             // Windows 11 build 22000+; older builds fall back to a solid theme
@@ -595,7 +874,8 @@ mod notification_tests {
     #[test]
     fn unavailable_methods_are_mentioned() {
         let mut r = report(0, false);
-        r.unavailable.push("Clear standby memory: requires administrator".into());
+        r.unavailable
+            .push("Clear standby memory: requires administrator".into());
         let (_, body) = result_notification(&r);
         assert!(body.contains("could not run"), "{body}");
     }

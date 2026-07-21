@@ -374,15 +374,19 @@ mod tests {
     #[test]
     fn protected_processes_are_marked_not_omitted() {
         let list = enumerate().expect("enumerate");
-        // pid 4 is the System process, which never opens for query.
-        let system = list.iter().find(|p| p.pid == 4);
-        if let Some(p) = system {
-            assert!(!p.accessible, "System should report as inaccessible");
+
+        // If PID 4 is visible in this environment, it must be marked inaccessible
+        // rather than dropped or errored. This is the only protected process
+        // whose identity is stable across machines; PID 0 (Idle) is also
+        // always inaccessible but isn't asserted on here since a restrictive
+        // CI sandbox may not enumerate it at all, and there's no other
+        // process guaranteed present and protected on every runner.
+        if let Some(system) = list.iter().find(|p| p.pid == 4) {
+            assert!(
+                !system.accessible,
+                "System process (pid 4) should report as inaccessible when present"
+            );
         }
-        assert!(
-            list.iter().any(|p| !p.accessible),
-            "some processes are always protected"
-        );
     }
 
     /// The first sample has no baseline, so CPU must be unknown rather than 0.
